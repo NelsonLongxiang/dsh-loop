@@ -10,7 +10,7 @@
 
 ## 效果
 
-![loop 状态条（多循环堆叠）](docs/preview/loop.png)
+![loop 状态条（真实运行截图：对话页 dock 双循环）](docs/preview/loop.png)
 
 ## 能力
 
