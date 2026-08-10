@@ -1,4 +1,4 @@
-/** dsh-loop 双 half 构建：Node（命令/工具/路由）+ 官方 client bundle。 */
+/** dsh-loop 双 half 构建：Node（esm）+ 官方 client bundle（cjs，__ModuleLoader__ 契约）。 */
 
 export default [
   {
@@ -10,13 +10,19 @@ export default [
     clean: true,
   },
   {
-    entry: ['src/client/index.tsx'],
-    format: 'esm',
-    platform: 'browser',
-    target: 'es2022',
+    name: '@dsh-external/dsh-loop/client',
+    entry: { client: 'src/client/index.tsx' },
     outDir: 'lib',
+    format: 'cjs',
+    platform: 'browser',
+    dts: false,
+    clean: false,
     external: [/@deepseek-ai\/dsh-client-/, 'react', 'react-dom'],
-    banner: 'window.__ModuleLoader__.load({ id: "@dsh-external/dsh-loop", factory: (require) => {',
-    footer: 'return module.exports; } });',
+    outputOptions: {
+      entryFileNames: 'client.js',
+      banner: 'window.__ModuleLoader__.load({ id: "@dsh-external/dsh-loop", factory: (require) => {',
+      footer: 'return module.exports; } });',
+      intro: 'var module = { exports: {} }; var exports = module.exports;',
+    },
   },
 ]
