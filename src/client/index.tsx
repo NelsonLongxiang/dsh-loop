@@ -52,6 +52,7 @@ const CARD_MAX = 'var(--dsh-composer-card-max-width, 780px)'
 
 /** Node half 返回的 wire loop 视图（agentId 即宿主 session id）。 */
 interface WireLoop {
+  id: string
   agentId: string
   prompt: string
   intervalMs: number
@@ -112,28 +113,18 @@ export function LoopBar(
   if (!inChat) return null
   if (loops.length === 0) return null
 
-  const loop = loops[0]
-  if (loop === undefined) return null
-  const countdown = countdownTo(loop.nextTickAt)
-  const countdownText = countdown > 0 ? `${countdown}s` : 'now'
-
-  return (
-    // 双层 dock 结构（对齐官方 GoalBar / QueueDock）：外层 dock 列负责与
-    // 同槽卡片同宽同基准（card cap 减 4 inset，居中），内层 bar 满宽限 max。
-    // 直接用 width:100% 会与 queue/todo 卡片的宽度基准错位干涉。
-    <div data-loop-dock="" style={{
-      boxSizing: 'border-box',
-      width: `calc(100% - 2 * ${SIDE_CLEARANCE} - 4 * ${DOCK_INSET})`,
-      margin: '0 auto',
-    }}>
+  // 多条 loop 并行：每条渲染一个 bar（同一 dock 列内堆叠），带 id 区分。
+  const bar = (loop: WireLoop): ReactNode => {
+    const countdown = countdownTo(loop.nextTickAt)
+    const countdownText = countdown > 0 ? `${countdown}s` : 'now'
+    return (
       <div
+        key={loop.id}
         data-loop-bar=""
         style={{
           boxSizing: 'border-box',
           display: 'flex', alignItems: 'center', gap: 10,
           width: '100%',
-          maxWidth: `calc(${CARD_MAX} - 4 * ${DOCK_INSET})`,
-          margin: '0 auto',
           // 高度由内容撑开（对齐官方 TodoPanel：body padding 上下 6px +
           // 24px 行高 + border ≈ 38px），不设固定 height——固定 height 会
           // 与 To-dos 卡片的实际高度产生 2px 级偏差。
@@ -145,32 +136,48 @@ export function LoopBar(
           fontFamily: 'system-ui',
         }}
       >
-      {/* 活动指示：ongoing 像素点 + 循环 icon */}
-      <span style={{ display: 'inline-flex', flex: 'none', alignItems: 'center', gap: 8 }}>
-        <StateDot state="ongoing" size={10} />
-        <span style={{ display: 'inline-flex', flex: 'none', color: 'var(--dsw-alias-label-tertiary)' }}>
-          <IconRefreshOutline16 size={14} />
+        {/* 活动指示：ongoing 像素点 + 循环 icon */}
+        <span style={{ display: 'inline-flex', flex: 'none', alignItems: 'center', gap: 8 }}>
+          <StateDot state="ongoing" size={10} />
+          <span style={{ display: 'inline-flex', flex: 'none', color: 'var(--dsw-alias-label-tertiary)' }}>
+            <IconRefreshOutline16 size={14} />
+          </span>
         </span>
-      </span>
-      {/* 状态标签（13/24 medium，与 Todo/Queue 标题同族） */}
-      <span style={{
-        flex: 'none', fontSize: 13, lineHeight: '24px', fontWeight: 500,
-        color: 'var(--dsw-alias-label-primary)',
-      }}>
-        {t('active')}
-      </span>
-      {/* prompt：主文本，省略号截断 */}
-      <span style={{
-        flex: 1, minWidth: 0, overflow: 'hidden', fontSize: 13, lineHeight: '20px',
-        color: 'var(--dsw-alias-label-primary-dimmed)', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-      }}>
-        {loop.prompt}
-      </span>
-      {/* 间隔 + 倒计时 */}
-      <span style={{ flex: 'none', fontSize: 12, lineHeight: '20px', color: 'var(--dsw-alias-label-caption)', whiteSpace: 'nowrap' }}>
-        {loop.intervalText} · {t('next', { countdown: countdownText })}
-      </span>
+        {/* 状态标签（13/24 medium，与 Todo/Queue 标题同族）+ loop id */}
+        <span style={{
+          flex: 'none', fontSize: 13, lineHeight: '24px', fontWeight: 500,
+          color: 'var(--dsw-alias-label-primary)',
+        }}>
+          {t('active')}
+          <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 400, color: 'var(--dsw-alias-label-caption)' }}>{loop.id}</span>
+        </span>
+        {/* prompt：主文本，省略号截断 */}
+        <span style={{
+          flex: 1, minWidth: 0, overflow: 'hidden', fontSize: 13, lineHeight: '20px',
+          color: 'var(--dsw-alias-label-primary-dimmed)', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {loop.prompt}
+        </span>
+        {/* 间隔 + 倒计时 */}
+        <span style={{ flex: 'none', fontSize: 12, lineHeight: '20px', color: 'var(--dsw-alias-label-caption)', whiteSpace: 'nowrap' }}>
+          {loop.intervalText} · {t('next', { countdown: countdownText })}
+        </span>
       </div>
+    )
+  }
+
+  return (
+    // 双层 dock 结构（对齐官方 GoalBar / QueueDock）：外层 dock 列负责与
+    // 同槽卡片同宽同基准（card cap 减 4 inset，居中），内层 bar 满宽限 max。
+    // 直接用 width:100% 会与 queue/todo 卡片的宽度基准错位干涉。
+    <div data-loop-dock="" style={{
+      boxSizing: 'border-box',
+      display: 'flex', flexDirection: 'column', gap: 6,
+      width: `calc(100% - 2 * ${SIDE_CLEARANCE} - 4 * ${DOCK_INSET})`,
+      maxWidth: `calc(${CARD_MAX} - 4 * ${DOCK_INSET})`,
+      margin: '0 auto',
+    }}>
+      {loops.map(bar)}
     </div>
   )
 }

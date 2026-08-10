@@ -50,10 +50,12 @@ export default {
   // 状态路由（client half 轮询）。
   inject: ['agents', 'commands', 'tools', 'timer', 'httpServer'],
   apply(ctx) {
-    // agentId -> { agent, prompt, intervalMs, lastDeliveredAt, dispose }
+    // loopId -> { id, agent, prompt, intervalMs, lastDeliveredAt, dispose }
+    // 一个 agent 可同时持有多个 loop（loopId = `loop-<N>` 全局递增）。
     const loops = new Map()
+    let loopSeq = 0
 
-    // client half 轮询的活动 loop 列表：按 sessionId 过滤（agent.id === sessionId）。
+    // client half 轮询的活动 loop 列表：按 sessionId 过滤（state.agent.id === sessionId）。
     ctx.effect(() => ctx.httpServer.register({
       kind: 'exact',
       path: LOOPS_PATH,
@@ -63,13 +65,14 @@ export default {
           const sessionId = url.searchParams.get('sessionId') ?? ''
           const now = Date.now()
           const rows = []
-          for (const [id, state] of loops) {
-            if (sessionId !== '' && id !== sessionId) continue
+          for (const [loopId, state] of loops) {
+            if (sessionId !== '' && state.agent.id !== sessionId) continue
             const nextTick = state.lastDeliveredAt === undefined
               ? now
               : state.lastDeliveredAt + state.intervalMs
             rows.push({
-              agentId: id,
+              id: loopId,
+              agentId: state.agent.id,
               prompt: state.prompt,
               intervalMs: state.intervalMs,
               intervalText: formatInterval(state.intervalMs),
@@ -86,17 +89,36 @@ export default {
       },
     }), 'loop: status route')
 
-    function stopLoop(agent) {
-      const state = loops.get(agent.id)
+    /** 停一个指定 loop；返回是否停到。 */
+    function stopLoop(loopId) {
+      const state = loops.get(loopId)
       if (state === undefined) return false
       state.dispose()
-      loops.delete(agent.id)
+      loops.delete(loopId)
       return true
     }
 
+    /** 停一个 agent 的全部 loop；返回停掉的数量。 */
+    function stopAgentLoops(agent) {
+      let stopped = 0
+      for (const [loopId, state] of [...loops]) {
+        if (state.agent !== agent) continue
+        state.dispose()
+        loops.delete(loopId)
+        stopped += 1
+      }
+      return stopped
+    }
+
+    /** 该 agent 的全部活动 loop。 */
+    function agentLoops(agent) {
+      return [...loops.values()].filter(state => state.agent === agent)
+    }
+
     function startLoop(agent, prompt, intervalMs) {
-      if (loops.has(agent.id)) stopLoop(agent)
+      const id = `loop-${++loopSeq}`
       const state = {
+        id,
         agent,
         prompt,
         intervalMs,
@@ -109,7 +131,7 @@ export default {
       // "立即开始 + 周期重复"），之后由 interval 周期投递。
       const deliver = () => {
         if (ctx.agents.get(agent.id) !== agent) {
-          stopLoop(agent)
+          stopLoop(id)
           return
         }
         if (agent.status !== 'idle') return
@@ -120,7 +142,7 @@ export default {
         }))
       }
       state.dispose = ctx.interval(deliver, intervalMs)
-      loops.set(agent.id, state)
+      loops.set(id, state)
       // 命令路径（用户敲 /loop）：agent 此刻空闲，立即投递第一轮；
       // 工具路径（模型 turn 内 loop start）：agent 忙，deliver 会跳过，
       // 本轮结束后由 interval 接管——两种场景都正确。
@@ -128,54 +150,72 @@ export default {
       return state
     }
 
-    // agent 销毁时清理其循环，防止 Map 泄漏与对已死 agent 的定时投递。
+    // agent 销毁时清理其全部循环，防止 Map 泄漏与对已死 agent 的定时投递。
     ctx.on('agent/disposed', (agent) => {
-      stopLoop(agent)
+      stopAgentLoops(agent)
     })
 
-    /** 命令：/loop [interval] <prompt> | /loop stop | /loop list */
+    /** 命令：/loop [interval] <prompt> | /loop stop [id] | /loop list */
     ctx.commands.register({
       name: 'loop',
-      description: 'Run a prompt on a schedule: /loop [interval] <prompt> | /loop stop | /loop list',
+      description: 'Run prompts on a schedule (multiple loops per session): /loop [interval] <prompt> | /loop stop [id] | /loop list',
       input: { hint: '[interval] <prompt>' },
       handler: (invocation) => {
         const raw = invocation.rawInput.trim()
         if (raw === '' || raw === 'list') {
-          const active = [...loops.values()].filter(s => s.agent === invocation.agent)
+          const active = agentLoops(invocation.agent)
           if (active.length === 0) {
             return {
               kind: 'success',
               text: 'No active loop.\n'
                 + 'Usage: /loop [interval] <prompt> — e.g. /loop 5m check the deploy\n'
-                + 'Bare /loop runs the built-in maintenance prompt.',
+                + 'Bare /loop runs the built-in maintenance prompt.\n'
+                + 'Multiple loops may run in parallel; stop one with /loop stop <id>.',
             }
           }
           return {
             kind: 'success',
-            text: active.map(s => `loop: every ${formatInterval(s.intervalMs)} — ${s.prompt}`).join('\n'),
+            text: active.map(s => `${s.id}: every ${formatInterval(s.intervalMs)} — ${s.prompt}`).join('\n'),
           }
         }
-        if (raw === 'stop' || raw === 'clear') {
-          return stopLoop(invocation.agent)
-            ? { kind: 'success', text: 'Loop stopped.' }
+        // stop [id]：停指定 loop（限本 agent），无 id 停全部。
+        const stopMatch = /^stop(?:\s+(\S+))?$/.exec(raw)
+        if (stopMatch !== null) {
+          const target = stopMatch[1]?.trim()
+          if (target !== undefined) {
+            const hit = agentLoops(invocation.agent).find(s => s.id === target)
+            return hit !== undefined && stopLoop(hit.id)
+              ? { kind: 'success', text: `Loop ${target} stopped.` }
+              : { kind: 'error', text: `No active loop with id ${target}.` }
+          }
+          const stopped = stopAgentLoops(invocation.agent)
+          return stopped > 0
+            ? { kind: 'success', text: `Stopped ${stopped} loop${stopped > 1 ? 's' : ''}.` }
             : { kind: 'error', text: 'No active loop to stop.' }
+        }
+        if (raw === 'clear') {
+          const stopped = stopAgentLoops(invocation.agent)
+          return stopped > 0
+            ? { kind: 'success', text: `Stopped ${stopped} loop${stopped > 1 ? 's' : ''}.` }
+            : { kind: 'error', text: 'No active loop to clear.' }
         }
         // 前导 token 是间隔则剥掉，否则用默认 1 分钟（模型每轮可用工具调整）。
         const tokens = raw.split(/\s+/)
         const intervalMs = parseIntervalMs(tokens[0])
         const prompt = intervalMs === null ? raw : tokens.slice(1).join(' ')
-        startLoop(invocation.agent, prompt, intervalMs ?? 60_000)
+        const state = startLoop(invocation.agent, prompt, intervalMs ?? 60_000)
         return {
           kind: 'success',
-          text: `Loop started: every ${formatInterval(intervalMs ?? 60_000)} — ${prompt}`,
+          text: `${state.id} started: every ${formatInterval(intervalMs ?? 60_000)} — ${prompt}`,
         }
       },
     })
 
-    /** 工具：模型自调节入口（start/stop/status）。 */
+    /** 工具：模型自调节入口（start/stop/status/list）。 */
     ctx.tools.register(defineTool({
       name: 'loop',
-      description: 'Start, stop, or inspect a scheduled loop on the current agent. '
+      description: 'Start, stop, or inspect scheduled loops on the current agent. '
+        + 'Multiple loops may run in parallel; start creates a new one each time. '
         + 'A loop re-delivers a prompt every interval; use it for polling, PR babysitting, '
         + 'or build-fix-test cycles. The model may adjust the interval or stop the loop '
         + 'each round, which is the self-paced mode.',
@@ -183,6 +223,7 @@ export default {
         action: { type: 'string', required: true },
         prompt: { type: 'string' },
         interval: { type: 'string' },
+        loop_id: { type: 'string' },
       },
       output: {
         schema: { type: 'string' },
@@ -200,16 +241,26 @@ export default {
             const intervalMs = typeof args.interval === 'string'
               ? (parseIntervalMs(args.interval) ?? 60_000)
               : 60_000
-            startLoop(agent, args.prompt, intervalMs)
-            return `loop started: every ${formatInterval(intervalMs)} — ${args.prompt}`
+            const state = startLoop(agent, args.prompt, intervalMs)
+            return `${state.id} started: every ${formatInterval(intervalMs)} — ${args.prompt}`
           }
-          case 'stop':
-            return stopLoop(agent) ? 'loop stopped' : 'no active loop'
-          case 'status': {
-            const state = loops.get(agent.id)
-            return state === undefined
+          case 'stop': {
+            const target = typeof args.loop_id === 'string' ? args.loop_id : undefined
+            if (target !== undefined) {
+              const hit = agentLoops(agent).find(s => s.id === target)
+              return hit !== undefined && stopLoop(hit.id)
+                ? `loop ${target} stopped`
+                : `no active loop with id ${target}`
+            }
+            const stopped = stopAgentLoops(agent)
+            return stopped > 0 ? `stopped ${stopped} loop${stopped > 1 ? 's' : ''}` : 'no active loop'
+          }
+          case 'status':
+          case 'list': {
+            const active = agentLoops(agent)
+            return active.length === 0
               ? 'no active loop'
-              : `loop active: every ${formatInterval(state.intervalMs)} — ${state.prompt}`
+              : active.map(s => `${s.id}: every ${formatInterval(s.intervalMs)} — ${s.prompt}`).join('\n')
           }
           default:
             throw new Error(`unknown loop action: ${String(args.action)}`)
