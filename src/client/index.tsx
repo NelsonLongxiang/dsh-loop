@@ -37,12 +37,18 @@ const NS = 'loop'
 const zh = {
   'active': '循环中',
   'next': '下次 {countdown}',
+  'loops.running': '{count} 个循环运行中',
+  'open': '展开',
+  'close': '收起',
 } satisfies Record<string, string>
 /** Loop namespace key union. */
 type LoopKey = keyof typeof zh
 const en = {
   'active': 'Looping',
   'next': 'next {countdown}',
+  'loops.running': '{count} loop(s) running',
+  'open': 'Expand',
+  'close': 'Collapse',
 } satisfies Record<string, string>
 
 /** 布局变量对齐官方 dock 家族（ConversationRoot.module.css / GoalBar / QueueDock）。 */
@@ -97,6 +103,7 @@ export function LoopBar(
   const { t, session } = props
   const loops = useSessionLoops(session.sessionId)
   const [inChat, setInChat] = useState(false)
+  const [open, setOpen] = useState(false)
 
   // 对话页探针：flow 列存在性（navbar/task-status 同信号）。body 级 observer
   // 只跑 querySelector，回调轻量；view 切换（flow 移除/重建）都触发。
@@ -113,7 +120,8 @@ export function LoopBar(
   if (!inChat) return null
   if (loops.length === 0) return null
 
-  // 多条 loop 并行：每条渲染一个 bar（同一 dock 列内堆叠），带 id 区分。
+  // 多 loop 折叠（参考 task-status）：单条直接显示；多条默认折叠为计数
+  // header，点击展开列表。
   const bar = (loop: WireLoop): ReactNode => {
     const countdown = countdownTo(loop.nextTickAt)
     const countdownText = countdown > 0 ? `${countdown}s` : 'now'
@@ -166,19 +174,84 @@ export function LoopBar(
     )
   }
 
-  return (
-    // 双层 dock 结构（对齐官方 GoalBar / QueueDock）：外层 dock 列负责与
-    // 同槽卡片同宽同基准（card cap 减 4 inset，居中），内层 bar 满宽限 max。
-    // 直接用 width:100% 会与 queue/todo 卡片的宽度基准错位干涉。
-    <div data-loop-dock="" style={{
-      boxSizing: 'border-box',
-      display: 'flex', flexDirection: 'column', gap: 6,
-      width: `calc(100% - 2 * ${SIDE_CLEARANCE} - 4 * ${DOCK_INSET})`,
-      maxWidth: `calc(${CARD_MAX} - 4 * ${DOCK_INSET})`,
-      margin: '0 auto',
-    }}>
-      {loops.map(bar)}
+  // 单条：直接显示完整 bar。
+  if (loops.length === 1) {
+    const single = loops[0]
+    return (
+      <div data-loop-dock="" style={{
+        boxSizing: 'border-box',
+        width: `calc(100% - 2 * ${SIDE_CLEARANCE} - 4 * ${DOCK_INSET})`,
+        maxWidth: `calc(${CARD_MAX} - 4 * ${DOCK_INSET})`,
+        margin: '0 auto',
+      }}>
+        {single !== undefined ? bar(single) : null}
+      </div>
+    )
+  }
+
+  // 多条：折叠为计数 header（dock 卡片视觉，对齐 task-status 折叠）。
+  const card = (body: ReactNode): ReactNode => (
+    <div
+      data-loop-dock=""
+      style={{
+        boxSizing: 'border-box',
+        width: `calc(100% - 2 * ${SIDE_CLEARANCE} - 4 * ${DOCK_INSET})`,
+        maxWidth: `calc(${CARD_MAX} - 4 * ${DOCK_INSET})`,
+        margin: '0 auto',
+        border: '1px solid var(--dsw-alias-border-l1)',
+        borderRadius: 12,
+        background: 'var(--dsw-specific-tip)',
+        overflow: 'hidden',
+        fontSize: 13,
+        fontFamily: 'system-ui',
+      }}
+    >
+      {body}
     </div>
+  )
+
+  const header = (
+    <div
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '6px 12px', cursor: 'pointer',
+      }}
+      onClick={() => { setOpen(v => !v) }}
+    >
+      <span style={{ display: 'inline-flex', flex: 'none', alignItems: 'center', gap: 8 }}>
+        <StateDot state="ongoing" size={10} />
+        <span style={{ display: 'inline-flex', flex: 'none', color: 'var(--dsw-alias-label-tertiary)' }}>
+          <IconRefreshOutline16 size={14} />
+        </span>
+      </span>
+      <span style={{ flex: 1, fontSize: 13, lineHeight: '24px', fontWeight: 500, color: 'var(--dsw-alias-label-primary)' }}>
+        {t('loops.running', { count: loops.length })}
+      </span>
+      <span style={{ flex: 'none', fontSize: 12, color: 'var(--dsw-alias-label-caption)' }}>
+        {open ? t('close') : t('open')}
+      </span>
+    </div>
+  )
+
+  return card(
+    <>
+      {header}
+      {open && (
+        <div style={{ maxHeight: 180, overflowY: 'auto', borderTop: '1px solid var(--dsw-alias-border-l1)', padding: '4px 0' }}>
+          {loops.map(loop => (
+            <div key={loop.id} style={{ padding: '2px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ flex: 'none', fontSize: 12, color: 'var(--dsw-alias-label-caption)', whiteSpace: 'nowrap' }}>{loop.id}</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', fontSize: 13, lineHeight: '20px', color: 'var(--dsw-alias-label-primary-dimmed)', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {loop.prompt}
+              </span>
+              <span style={{ flex: 'none', fontSize: 12, color: 'var(--dsw-alias-label-caption)', whiteSpace: 'nowrap' }}>
+                {loop.intervalText} · {t('next', { countdown: countdownTo(loop.nextTickAt) > 0 ? `${countdownTo(loop.nextTickAt)}s` : 'now' })}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </>,
   )
 }
 
