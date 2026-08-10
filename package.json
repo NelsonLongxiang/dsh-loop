@@ -1,0 +1,28 @@
+{
+  "name": "@dsh-external/dsh-loop",
+  "description": "定时循环插件：/loop 命令 + loop 工具 + 活动状态条（官方 dock 槽）",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.mjs",
+  "exports": {
+    ".": { "default": "./lib/index.mjs" },
+    "./client": "./lib/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" }
+  },
+  "dshClient": {
+    "inject": ["@deepseek-ai/dsh-client-runtime", "@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-locale"],
+    "platform": "web"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-client-runtime": "^0.0.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.0.1",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.0.1",
+    "cordis": "^4.0.0-rc.7",
+    "react": "^18.2.0"
+  }
+}
