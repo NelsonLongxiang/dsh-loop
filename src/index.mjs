@@ -46,9 +46,9 @@ function formatInterval(ms) {
 export default {
   name: 'loop',
   // agents 定位/校验当前 agent；commands 注册 /loop；tools 注册 loop 工具；
-  // timer 提供 ctx.interval（生命周期管理的定时器）；httpServer 提供只读
+  // timer 提供 ctx.interval（生命周期管理的定时器）；webServer 提供只读
   // 状态路由（client half 轮询）。
-  inject: ['agents', 'commands', 'tools', 'timer', 'httpServer'],
+  inject: ['agents', 'commands', 'tools', 'timer', 'webServer'],
   apply(ctx) {
     // loopId -> { id, agent, prompt, intervalMs, lastDeliveredAt, dispose }
     // 一个 agent 可同时持有多个 loop（loopId = `loop-<N>` 全局递增）。
@@ -56,12 +56,33 @@ export default {
     let loopSeq = 0
 
     // client half 轮询的活动 loop 列表：按 sessionId 过滤（state.agent.id === sessionId）。
-    ctx.effect(() => ctx.httpServer.register({
+    // GET 读列表；POST 停指定 loop（body {id}）——状态条右侧停止按钮走此端点。
+    ctx.effect(() => ctx.webServer.register({
       kind: 'exact',
       path: LOOPS_PATH,
       handler: async (req, res) => {
         try {
           const url = new URL(req.url ?? '/', 'http://dsh.internal')
+          const method = (req.method ?? 'GET').toUpperCase()
+          if (method === 'POST') {
+            let body = ''
+            for await (const chunk of req) body += String(chunk)
+            let id = ''
+            try {
+              id = String((JSON.parse(body) ?? {}).id ?? '').trim()
+            } catch {
+              // 非 JSON body → 视为空 id（下面 400）。
+            }
+            if (id === '') {
+              res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+              res.end(JSON.stringify({ error: 'stop needs a loop id' }))
+              return
+            }
+            const stopped = stopLoop(id)
+            res.writeHead(stopped ? 200 : 404, { 'content-type': 'application/json; charset=utf-8' })
+            res.end(JSON.stringify({ ok: stopped, id }))
+            return
+          }
           const sessionId = url.searchParams.get('sessionId') ?? ''
           const now = Date.now()
           const rows = []
@@ -87,7 +108,7 @@ export default {
           res.end(JSON.stringify({ error: message }))
         }
       },
-    }), 'loop: status route')
+    }), 'loop: status + stop route')
 
     /** 停一个指定 loop；返回是否停到。 */
     function stopLoop(loopId) {

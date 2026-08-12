@@ -8,6 +8,9 @@ export default [
     target: 'es2024',
     outDir: 'lib',
     clean: true,
+    // 官方包由 profile 闭包注入（$DSH_HOME/profiles/node_modules flat fallback）——
+    // 不内联（本地 symlink 可解析时 tsdown 会误内联，见 0812 适配）。
+    external: [/@deepseek-ai\//],
   },
   {
     name: '@dsh-external/dsh-loop/client',
