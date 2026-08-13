@@ -39,7 +39,7 @@
 **推荐：git 源一行安装**（构建产物已入库，git 源不触发构建）：
 
 ```sh
-dsh plugin --profile web add "github:dsh-external/dsh-loop#main"
+dsh plugin --profile web add "github:vlln/dsh-loop#main"
 ```
 
 或本地目录（有源码时）：`git clone` 后 `cd dsh-loop && dsh plugin --profile web add .`。
