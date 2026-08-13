@@ -3,7 +3,7 @@
 <p align="center">定时循环插件：/loop 命令 + loop 工具（模型自调节）+ 对话页活动状态条，支持多循环并行</p>
 
 <p align="center">
-  <img src="https://badgen.net/badge/license/BSD-3-Clause/blue" alt="license">
+  <img src="https://badgen.net/badge/license/MIT/green" alt="license">
 </p>
 
 按固定间隔向当前 agent 重复投递 prompt——适合轮询、PR 看护、build-fix-test 循环。对齐 Claude Code 的 `/loop` 语义，**一个会话可同时跑多个循环**。形态：官方 **bundle 插件**（`dsh.bundle` + dshClient 通道），0 patch。

@@ -35,5 +35,6 @@
   },
   "devDependencies": {
     "tsdown": "0.22.2"
-  }
+  },
+  "license": "MIT"
 }
