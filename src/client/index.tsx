@@ -7,10 +7,10 @@
 // --dsw-specific-tip 背景、官方 icon（IconRefreshOutline16）+ StateDot
 // （ongoing 活动指示）。有循环显示「● ⟳ 循环中 · prompt · 5m · 下次 23s」，
 // 无则 null。零官方改动。
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { Context } from 'cordis'
 import type { ReactNode } from 'react'
-import { IconRefreshOutline16, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutline16, IconRefreshOutline16, StateDot, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 // Context merges: slots/locale (runtime) reach this program through their
 // client entries.
 import type {} from '@deepseek-ai/dsh-client-runtime/client'
@@ -40,6 +40,7 @@ const zh = {
   'loops.running': '{count} 个循环运行中',
   'open': '展开',
   'close': '收起',
+  'stop': '停止循环',
 } satisfies Record<string, string>
 /** Loop namespace key union. */
 type LoopKey = keyof typeof zh
@@ -49,6 +50,7 @@ const en = {
   'loops.running': '{count} loop(s) running',
   'open': 'Expand',
   'close': 'Collapse',
+  'stop': 'Stop loop',
 } satisfies Record<string, string>
 
 /** 布局变量对齐官方 dock 家族（ConversationRoot.module.css / GoalBar / QueueDock）。 */
@@ -104,6 +106,24 @@ export function LoopBar(
   const loops = useSessionLoops(session.sessionId)
   const [inChat, setInChat] = useState(false)
   const [open, setOpen] = useState(false)
+  const [stopping, setStopping] = useState<string | null>(null)
+
+  /** 停止指定 loop（POST Node half 路由）；成功后轮询下一轮自然消失。 */
+  const stopLoop = useCallback(async (id: string): Promise<void> => {
+    if (stopping !== null) return
+    setStopping(id)
+    try {
+      await fetch(LOOPS_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
+    } catch {
+      // 网络错误：保持状态条，用户可重试。
+    } finally {
+      setStopping(null)
+    }
+  }, [stopping])
 
   // 对话页探针：flow 列存在性（navbar/task-status 同信号）。body 级 observer
   // 只跑 querySelector，回调轻量；view 切换（flow 移除/重建）都触发。
@@ -169,6 +189,34 @@ export function LoopBar(
         {/* 间隔 + 倒计时 */}
         <span style={{ flex: 'none', fontSize: 12, lineHeight: '20px', color: 'var(--dsw-alias-label-caption)', whiteSpace: 'nowrap' }}>
           {loop.intervalText} · {t('next', { countdown: countdownText })}
+        </span>
+        {/* 停止按钮：官方 queue/action 同款（Tooltip + icon button，右侧） */}
+        <span style={{ display: 'inline-flex', flex: 'none', alignItems: 'center' }}>
+          <Tooltip label={t('stop')} side="bottom" delayMs={500}>
+            <button
+              type="button"
+              aria-label={t('stop')}
+              disabled={stopping === loop.id}
+              onClick={() => { void stopLoop(loop.id) }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                width: 24, height: 24, padding: 0, border: 'none', borderRadius: 6,
+                background: 'transparent', cursor: 'pointer', flex: 'none',
+                color: 'var(--dsw-alias-label-tertiary)',
+                transition: 'background .15s ease, color .15s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,140,.12))'
+                e.currentTarget.style.color = 'var(--dsw-alias-label-primary)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent'
+                e.currentTarget.style.color = 'var(--dsw-alias-label-tertiary)'
+              }}
+            >
+              <IconCloseOutline16 size={14} />
+            </button>
+          </Tooltip>
         </span>
       </div>
     )
