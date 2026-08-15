@@ -75,4 +75,4 @@ pnpm run build      # tsdown：Node half (lib/index.mjs) + client bundle (lib/cl
 
 ## 许可
 
-BSD-3-Clause（DSH 生态示例插件）。
+MIT License（DSH 生态示例插件）。
