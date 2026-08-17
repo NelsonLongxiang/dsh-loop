@@ -10,7 +10,7 @@
 
 ## 效果
 
-![loop 状态条（真实运行截图：对话页 dock 双循环）](https://cdn.jsdelivr.net/gh/vlln/dsh-loop@main/docs/preview/loop.png)
+![loop 状态条（真实运行截图：多循环折叠为计数条，展开后逐条列出）](https://cdn.jsdelivr.net/gh/vlln/dsh-loop@main/docs/preview/loop.png)
 
 ## 能力
 
