@@ -1,6 +1,6 @@
 <h1 align="center">loop</h1>
 
-<p align="center">中文 | [English](README.md)</p>
+<p align="center">中文 | <a href="README.md">English</a></p>
 
 <p align="center">定时循环插件：/loop 命令 + loop 工具（模型自调节）+ 对话页活动状态条，支持多循环并行</p>
 

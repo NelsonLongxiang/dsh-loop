@@ -1,6 +1,6 @@
 <h1 align="center">loop</h1>
 
-<p align="center">[中文](README.zh.md) | English</p>
+<p align="center"><a href="README.zh.md">中文</a> | English</p>
 
 <p align="center">Scheduled loop plugin: `/loop` command + `loop` tool (self-adjusting by the model) + active status bar on the chat page, with support for multiple concurrent loops</p>
 
