@@ -1,79 +1,81 @@
 <h1 align="center">loop</h1>
 
-<p align="center">定时循环插件：/loop 命令 + loop 工具（模型自调节）+ 对话页活动状态条，支持多循环并行</p>
+<p align="center">[中文](README.zh.md) | English</p>
+
+<p align="center">Scheduled loop plugin: `/loop` command + `loop` tool (self-adjusting by the model) + active status bar on the chat page, with support for multiple concurrent loops</p>
 
 <p align="center">
   <img src="https://badgen.net/badge/license/MIT/green" alt="license">
 </p>
 
-按固定间隔向当前 agent 重复投递 prompt——适合轮询、PR 看护、build-fix-test 循环。对齐 Claude Code 的 `/loop` 语义，**一个会话可同时跑多个循环**。形态：官方 **bundle 插件**（`dsh.bundle` + dshClient 通道），0 patch。
+Delivers a prompt to the current agent at a fixed interval — ideal for polling, PR babysitting, and build-fix-test cycles. Aligned with Claude Code's `/loop` semantics, **multiple loops can run concurrently in a single session**. Delivered as an official **bundle plugin** (`dsh.bundle` + dshClient channel), 0 patch.
 
-## 效果
+## Preview
 
-![loop 状态条（真实运行截图：多循环折叠为计数条，展开后逐条列出）](https://cdn.jsdelivr.net/gh/vlln/dsh-loop@main/docs/preview/loop.png?v=2)
+![loop status bar (real run screenshot: multiple loops collapse into a count bar, expanding lists them one by one)](https://cdn.jsdelivr.net/gh/vlln/dsh-loop@main/docs/preview/loop.png?v=2)
 
-## 能力
+## Features
 
-**工具**（`defineTool` 注册，模型每轮可自调节）：
+**Tool** (registered via `defineTool`, the model can self-adjust on every turn):
 
-| 工具 | 说明 |
+| Tool | Description |
 |---|---|
-| `loop` | start（启动新循环）/ stop（停指定或全部）/ status / list（列出当前会话循环） |
+| `loop` | start (start a new loop) / stop (stop a specific one or all) / status / list (list loops in the current session) |
 
-**命令**（用户侧）：
+**Commands** (user side):
 
-| 命令 | 说明 |
+| Command | Description |
 |---|---|
-| `/loop [间隔] <prompt>` | 启动新循环（间隔 `5m`/`30s`/`1h`/`2d` 或裸数字=分钟；裸 `/loop` 用内置维护 prompt） |
-| `/loop list` | 列出当前会话全部循环（含 id） |
-| `/loop stop <id>` / `/loop stop` | 停指定循环 / 停全部 |
+| `/loop [interval] <prompt>` | Start a new loop (interval `5m`/`30s`/`1h`/`2d` or a bare number = minutes; bare `/loop` uses the built-in maintenance prompt) |
+| `/loop list` | List all loops in the current session (with ids) |
+| `/loop stop <id>` / `/loop stop` | Stop a specific loop / stop all |
 
-**UI**（对话页输入框上方 dock 槽）：
+**UI** (dock slot above the input box on the chat page):
 
-| 功能 | 说明 |
+| Feature | Description |
 |---|---|
-| 活动状态条 | 单循环：`● ⟳ 循环中 · <prompt> · 5m · 下次 23s`；多循环折叠为计数条「N 个循环运行中 · 展开」，点击展开列表 |
+| Active status bar | Single loop: `● ⟳ looping · <prompt> · 5m · next in 23s`; multiple loops collapse into a count bar "N loops running · expand", click to expand the list |
 
-## 安装
+## Installation
 
-**推荐：git 源一行安装**（构建产物已入库，git 源不触发构建）：
+**Recommended: one-line install from a git source** (build artifacts are committed, so a git source does not trigger a build):
 
 ```sh
-dsh plugin --profile web add "github:vlln/dsh-loop#main"   # git 源一行（构建产物已入库）
-# 或 npm 源：dsh plugin --profile web add @vlln/dsh-loop@0.3.0
+dsh plugin --profile web add "github:vlln/dsh-loop#main"   # one-line git source (build artifacts committed)
+# or npm source: dsh plugin --profile web add @vlln/dsh-loop@0.3.0
 ```
 
-或本地目录（有源码时）：`git clone` 后 `cd dsh-loop && dsh plugin --profile web add .`。
+Or from a local directory (when you have the source): `git clone`, then `cd dsh-loop && dsh plugin --profile web add .`.
 
-装完 **重启 web** 生效（bundle 挂载在启动时合成）；之后可在设置页「插件」面板停用/启用（运行时生效 + 持久化）。
+After installing, **restart web** for it to take effect (bundles are composed at startup); afterwards you can disable/enable it from the "Plugins" panel on the settings page (takes effect at runtime + persisted).
 
-## 使用
+## Usage
 
 ```sh
-# 用户侧
-/loop 5m 检查 deploy 分支的 PR      # 每 5 分钟投递一次
-/loop list                           # loop-1: every 5m — 检查 deploy 分支的 PR
-/loop stop loop-1                    # 停指定
-/loop stop                           # 停全部
+# User side
+/loop 5m check PRs on the deploy branch   # delivered every 5 minutes
+/loop list                                # loop-1: every 5m — check PRs on the deploy branch
+/loop stop loop-1                         # stop a specific one
+/loop stop                                # stop all
 
-# 模型侧（loop 工具）
-loop action=start prompt="修 flaky test" interval="2m"
+# Model side (loop tool)
+loop action=start prompt="fix flaky test" interval="2m"
 loop action=status
 loop action=stop loop_id="loop-2"
 ```
 
-循环活在当前 harness 进程，随进程退出消失（不跨重启持久化，与 Claude Code `/loop` 一致）。
+Loops live in the current harness process and disappear when the process exits (not persisted across restarts, consistent with Claude Code `/loop`).
 
-## 开发
+## Development
 
 ```sh
 pnpm install
-pnpm run build      # tsdown：Node half (lib/index.mjs) + client bundle (lib/client.js)
+pnpm run build      # tsdown: Node half (lib/index.mjs) + client bundle (lib/client.js)
 ```
 
-- Node half：`src/index.mjs`（命令/工具/loops 状态路由 `/plugins/dsh-loop/loops`）
-- client：`src/client/index.tsx`（dock 槽状态条）
+- Node half: `src/index.mjs` (commands/tool/loops status route `/plugins/dsh-loop/loops`)
+- client: `src/client/index.tsx` (dock slot status bar)
 
-## 许可
+## License
 
-MIT License（DSH 生态示例插件）。
+MIT License (example plugin of the DSH ecosystem).
