@@ -13,7 +13,7 @@ export default [
     external: [/@deepseek-ai\//],
   },
   {
-    name: '@vlln/dsh-loop/client',
+    name: '@nelsonlongxiang/dsh-loop/client',
     entry: { client: 'src/client/index.tsx' },
     outDir: 'lib',
     format: 'cjs',
@@ -23,7 +23,7 @@ export default [
     external: [/@deepseek-ai\/dsh-client-/, 'react', 'react-dom'],
     outputOptions: {
       entryFileNames: 'client.js',
-      banner: 'window.__ModuleLoader__.load({ id: "@vlln/dsh-loop", factory: (require) => {',
+      banner: 'window.__ModuleLoader__.load({ id: "@nelsonlongxiang/dsh-loop", factory: (require) => {',
       footer: 'return module.exports; } });',
       intro: 'var module = { exports: {} }; var exports = module.exports;',
     },

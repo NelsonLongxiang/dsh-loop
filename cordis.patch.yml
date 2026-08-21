@@ -1,4 +1,4 @@
 # dsh-loop bundle：向组合挂 Node half（命令/工具/loops 数据路由）
 - insert:
     - id: dsh-loop
-      name: '@vlln/dsh-loop'
+      name: '@nelsonlongxiang/dsh-loop'

@@ -1,9 +1,9 @@
 # Boundary: bundle plugin vs. library / 边界：bundle 插件还是库
 
 > When to ship something as a DSH bundle plugin and when as a plain library,
-> and why @vlln/dsh-loop could only ever be the former.
+> and why @nelsonlongxiang/dsh-loop could only ever be the former.
 >
-> 何时做成 DSH bundle 插件、何时做成普通库，以及为什么 @vlln/dsh-loop 只能是前者。
+> 何时做成 DSH bundle 插件、何时做成普通库，以及为什么 @nelsonlongxiang/dsh-loop 只能是前者。
 
 ## The test / 判据
 
@@ -40,7 +40,7 @@ plugins never value-import each other — host-side collaboration goes through
 
 ## Why dsh-loop must be a bundle / 为什么 dsh-loop 必须是 bundle
 
-Score @vlln/dsh-loop against the plugin column — it hits every row:
+Score @nelsonlongxiang/dsh-loop against the plugin column — it hits every row:
 对照插件列逐条打分——它全中：
 
 | Mount point / 挂载点 | Where / 位置 |
