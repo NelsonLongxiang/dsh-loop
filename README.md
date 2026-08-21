@@ -41,8 +41,8 @@ Delivers a prompt to the current agent at a fixed interval — ideal for polling
 **Recommended: one-line install from a git source** (build artifacts are committed, so a git source does not trigger a build):
 
 ```sh
-dsh plugin --profile web add "github:vlln/dsh-loop#main"   # one-line git source (build artifacts committed)
-# or npm source: dsh plugin --profile web add @vlln/dsh-loop@0.3.0
+dsh plugin --profile web add "github:NelsonLongxiang/dsh-loop#main"   # one-line git source (build artifacts committed)
+# or npm source (private Gitea registry): dsh plugin --profile web add @nelsonlongxiang/dsh-loop@0.4.0
 ```
 
 Or from a local directory (when you have the source): `git clone`, then `cd dsh-loop && dsh plugin --profile web add .`.
