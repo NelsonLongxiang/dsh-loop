@@ -64,7 +64,7 @@ loop action=status
 loop action=stop loop_id="loop-2"
 ```
 
-循环活在当前 harness 进程，随进程退出消失（不跨重启持久化，与 Claude Code `/loop` 一致）。
+循环定义持久化到 `$DSH_HOME/plugins-data/dsh-loop/loops.json`（未设置 `DSH_HOME` 时回落 `~/.dsh/`）。进程重启后，宿主会话恢复（agent 以同一 id 重建）时循环自动重挂——锚点是 `agent/created` 生命周期事件（live agent 对象永不序列化，只存 `sessionId`/`agentId`、prompt、间隔与 `lastDeliveredAt`）。显式停止（命令/工具/状态条按钮）= 定义永久删除。宿主不再回来的定义在空闲 7 天后淘汰（不会早于循环自身间隔的两倍），文件不膨胀。
 
 ## 开发
 

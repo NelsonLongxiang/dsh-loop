@@ -64,7 +64,7 @@ loop action=status
 loop action=stop loop_id="loop-2"
 ```
 
-Loops live in the current harness process and disappear when the process exits (not persisted across restarts, consistent with Claude Code `/loop`).
+Loop definitions persist to `$DSH_HOME/plugins-data/dsh-loop/loops.json` (falling back to `~/.dsh/` when `DSH_HOME` is unset). After a restart, a loop re-attaches automatically when its host session resumes — the anchor is the `agent/created` lifecycle event (live agent objects are never serialized; only `sessionId`/`agentId`, prompt, interval and `lastDeliveredAt` are stored). Explicit stops (command, tool, or the status-bar button) delete the definition permanently. Definitions whose host never returns are evicted after 7 idle days (never sooner than twice the loop's own interval), keeping the file bounded.
 
 ## Development
 
