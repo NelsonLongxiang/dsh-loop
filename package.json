@@ -1,7 +1,7 @@
 {
   "name": "@nelsonlongxiang/dsh-loop",
   "description": "定时循环插件：/loop 命令 + loop 工具 + 活动状态条（官方 dock 槽）",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "type": "module",
   "main": "lib/index.mjs",
   "files": [

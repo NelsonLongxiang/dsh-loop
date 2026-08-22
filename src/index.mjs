@@ -10,7 +10,7 @@
 // 重挂。client half 经 conversation.input.dock 槽显示活动 loop 状态条
 // （与官方 goal / task-status 同一 dock 家族），数据由本文件注册的只读
 // 路由提供。
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -21,6 +21,12 @@ const PLUGIN_ID = 'dsh-loop'
 /** 持久化根：$DSH_HOME/plugins-data/dsh-loop/（DSH_HOME 缺省回落 ~/.dsh/）。 */
 const STORE_DIR = join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'plugins-data', PLUGIN_ID)
 const STORE_FILE = join(STORE_DIR, 'loops.json')
+/**
+ * Event ledger (append-only audit): one JSONL row per event, four kinds:
+ * created / stopped / swept / remounted. Append failures never block the
+ * main flow (same tolerance discipline as saveStoreLoops). No rotation yet.
+ */
+const HISTORY_FILE = join(STORE_DIR, 'loops.history.jsonl')
 /**
  * 淘汰窗口：宿主 agent 已销毁且这一窗口内没有新投递（即未重挂）的循环
  * 定义按 stale 删除。取 max(窗口, 2×间隔)，长间隔循环不因窗口短于自身
@@ -112,6 +118,20 @@ function saveStoreLoops(entries) {
   }
 }
 
+/**
+ * Append one ledger event (append-only JSONL; audit-grade, rotation later).
+ * Silent on failure: a missing ledger row must never break loop lifecycle.
+ */
+function appendHistory(event, loopId, fields) {
+  try {
+    mkdirSync(STORE_DIR, { recursive: true })
+    const line = JSON.stringify({ ts: Date.now(), event, loopId, ...fields })
+    appendFileSync(HISTORY_FILE, line + '\n', 'utf8')
+  } catch {
+    // Ledger unwritable: tolerate, main flow continues.
+  }
+}
+
 export default {
   name: 'loop',
   // agents 定位/校验当前 agent；commands 注册 /loop；tools 注册 loop 工具；
@@ -140,6 +160,7 @@ export default {
         const idleMs = now - (entry.updatedAt ?? entry.createdAt)
         if (idleMs > Math.max(STALE_AFTER_MS, entry.intervalMs * 2)) {
           persisted.delete(id)
+          appendHistory('swept', id, { agentId: entry.agentId, prompt: entry.prompt, intervalMs: entry.intervalMs, reason: 'stale' })
           dropped = true
         }
       }
@@ -180,6 +201,7 @@ export default {
       }
       state.dispose = ctx.interval(deliver, entry.intervalMs)
       loops.set(entry.id, state)
+      appendHistory('remounted', entry.id, { agentId: entry.agentId, prompt: entry.prompt, intervalMs: entry.intervalMs, reason: 'restart' })
       return true
     }
 
@@ -194,13 +216,18 @@ export default {
       const state = loops.get(loopId)
       if (state === undefined) {
         // 可能是重启后未重挂的存量定义（用户对看不见的循环补刀）。
+        const entry = persisted.get(loopId)
         const removed = persisted.delete(loopId)
-        if (removed) persistAll()
+        if (removed && entry !== undefined) {
+          persistAll()
+          appendHistory('stopped', loopId, { agentId: entry.agentId, prompt: entry.prompt, intervalMs: entry.intervalMs, reason: 'user' })
+        }
         return removed
       }
       detach(state)
       persisted.delete(loopId)
       persistAll()
+      appendHistory('stopped', loopId, { agentId: state.entry.agentId, prompt: state.entry.prompt, intervalMs: state.entry.intervalMs, reason: 'user' })
       return true
     }
 
@@ -211,6 +238,7 @@ export default {
         if (state.agent !== agent) continue
         detach(state)
         persisted.delete(loopId)
+        appendHistory('stopped', loopId, { agentId: state.entry.agentId, prompt: state.entry.prompt, intervalMs: state.entry.intervalMs, reason: 'user' })
         stopped += 1
       }
       if (stopped > 0) persistAll()
@@ -241,6 +269,7 @@ export default {
       }
       persisted.set(id, entry)
       persistAll()
+      appendHistory('created', id, { agentId: entry.agentId, prompt: entry.prompt, intervalMs: entry.intervalMs })
       // 命令路径（用户敲 /loop）：agent 此刻空闲，立即投递第一轮；
       // 工具路径（模型 turn 内 loop start）：agent 忙，deliver 会跳过，
       // 本轮结束后由 interval 接管——两种场景都正确。
