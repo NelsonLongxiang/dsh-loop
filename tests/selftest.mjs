@@ -135,4 +135,24 @@ const readStore = () => JSON.parse(readFileSync(storeFile, 'utf8'))
   console.log('scenario 4 (POST stop on dormant definition): OK')
 }
 
+// ---- 场景 5：事件台账（loops.history.jsonl append-only）----
+{
+  const { existsSync } = await import('node:fs')
+  const historyFile = join(home, 'plugins-data', 'dsh-loop', 'loops.history.jsonl')
+  assert.ok(existsSync(historyFile), 'history ledger created')
+  const rows = readFileSync(historyFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
 
+  const events = new Set(rows.map((r) => r.event))
+  for (const kind of ['created', 'stopped', 'swept', 'remounted']) {
+    assert.ok(events.has(kind), 'ledger has ' + kind + ' event; got: ' + [...events])
+  }
+  for (const r of rows) {
+    assert.equal(typeof r.ts, 'number')
+    assert.equal(typeof r.loopId, 'string')
+  }
+  const stoppedRow = rows.find((r) => r.event === 'stopped')
+  assert.equal(stoppedRow.reason, 'user')
+  const sweptRow = rows.find((r) => r.event === 'swept')
+  assert.equal(sweptRow.reason, 'stale')
+  console.log('scenario 5 (append-only event ledger created/stopped/swept/remounted): OK')
+}

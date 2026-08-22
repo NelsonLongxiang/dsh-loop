@@ -32,6 +32,10 @@ const LOOPS_PATH = '/plugins/dsh-loop/loops'
 
 /** 轮询间隔：状态条不需要亚秒刷新；60s 足够新（倒计时本地重算，不依赖轮询）。 */
 const POLL_MS = 60_000
+/**
+ * 空闲退避上限：连续空返回（loops:[]）时轮询间隔一步退到 5min——无循环会话不再以 60s 恒频敲路由（生产实测的请求频繁投诉来源）。非空返回或 sessionId 切换立即回 60s。
+ */
+const POLL_IDLE_MS = 300_000
 
 const NS = 'loop'
 const zh = {
@@ -68,24 +72,53 @@ interface WireLoop {
   nextTickAt: number
 }
 
-/** 会话级轮询 hook：每 POLL_MS 拉取 Node half 路由，返回该会话的活动 loop。 */
+/** 会话级轮询 hook：自调度拉取 Node half 路由，返回该会话的活动 loop。
+ * 空闲退避：连续空返回（loops:[]）→ 间隔退到 POLL_IDLE_MS（5min）；非空
+ * 返回立即回 60s。后台 tab（document.hidden）整段停轮，回前台立即补一次。
+ * sessionId 切换由 effect 重建自然重置（cleanup 清定时器+监听器）。 */
 function useSessionLoops(sessionId: string): WireLoop[] {
   const [loops, setLoops] = useState<WireLoop[]>([])
   useEffect(() => {
     let alive = true
+    // 自调度轮询：间隔句柄可变（退避态与活跃态不同间隔）。
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const clearTimer = (): void => { if (timer !== undefined) clearTimeout(timer) }
+    let idle = false
+    const schedule = (): void => {
+      clearTimer()
+      timer = setTimeout(() => { void poll() }, idle ? POLL_IDLE_MS : POLL_MS)
+    }
     const poll = async (): Promise<void> => {
       try {
         const res = await fetch(`${LOOPS_PATH}?sessionId=${encodeURIComponent(sessionId)}`, { headers: { accept: 'application/json' } })
         if (!res.ok) return
         const data = (await res.json()) as { loops?: WireLoop[] }
-        if (alive && Array.isArray(data.loops)) setLoops(data.loops)
+        if (alive && Array.isArray(data.loops)) {
+          setLoops(data.loops)
+          // 退避规则：空返回 → 空闲态；非空 → 立即回 60s。
+          idle = data.loops.length === 0
+        }
       } catch {
         // 瞬态网络错误：保持上一帧，下轮重试。
       }
+      if (alive) schedule()
     }
+    const onVisibility = (): void => {
+      if (document.hidden) {
+        // 后台暂停：清定时器，整段停轮。
+        clearTimer()
+      } else {
+        // 回前台：立即补一次（poll 自会按返回结果重排间隔）。
+        void poll()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
     void poll()
-    const timer = setInterval(() => { void poll() }, POLL_MS)
-    return () => { alive = false; clearInterval(timer) }
+    return () => {
+      alive = false
+      clearTimer()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
   }, [sessionId])
   return loops
 }

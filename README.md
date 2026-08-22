@@ -66,6 +66,9 @@ loop action=stop loop_id="loop-2"
 
 Loop definitions persist to `$DSH_HOME/plugins-data/dsh-loop/loops.json` (falling back to `~/.dsh/` when `DSH_HOME` is unset). After a restart, a loop re-attaches automatically when its host session resumes — the anchor is the `agent/created` lifecycle event (live agent objects are never serialized; only `sessionId`/`agentId`, prompt, interval and `lastDeliveredAt` are stored). Explicit stops (command, tool, or the status-bar button) delete the definition permanently. Definitions whose host never returns are evicted after 7 idle days (never sooner than twice the loop's own interval), keeping the file bounded.
 
+- Idle polling backoff: empty responses (no active loops) back the client poll off to 5 minutes; any active loop returns it to 60s. Background tabs pause polling entirely (visibilitychange).
+- Event ledger: append-only plugins-data/dsh-loop/loops.history.jsonl records created/stopped/swept/remounted events with loop metadata (v0.4.2).
+
 ## Development
 
 ```sh
