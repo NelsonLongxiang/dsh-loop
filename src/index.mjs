@@ -155,8 +155,9 @@ export default {
       const now = Date.now()
       let dropped = false
       for (const [id, entry] of [...persisted]) {
-        // 活着的（有运行态绑定）永不淘汰。
+        // 活着的（有运行态绑定）永不淘汰；paused 是用户显式意图，暂停即续命。
         if (loops.has(id)) continue
+        if (entry.paused === true) continue
         const idleMs = now - (entry.updatedAt ?? entry.createdAt)
         if (idleMs > Math.max(STALE_AFTER_MS, entry.intervalMs * 2)) {
           persisted.delete(id)
@@ -177,6 +178,8 @@ export default {
     const remount = (entry, agent) => {
       if (entry === undefined || loops.has(entry.id)) return false
       if (agent === undefined) return false
+      // paused 定义恢复进持久化面但不装定时器——恢复会话不复活用户的暂停。
+      if (entry.paused === true) return false
       const state = {
         id: entry.id,
         agent,
@@ -231,6 +234,37 @@ export default {
       return true
     }
 
+/** 暂停一条 loop：卸定时器、标 paused；定义保留、参与淘汰豁免。 */
+    function pauseLoop(loopId, agentIdForLog) {
+      const state = loops.get(loopId)
+      const entry = state?.entry ?? persisted.get(loopId)
+      if (entry === undefined) return false
+      if (state !== undefined) detach(state)
+      entry.paused = true
+      entry.pausedAt = Date.now()
+      entry.updatedAt = entry.pausedAt
+      persistAll()
+      appendHistory('paused', loopId, { agentId: entry.agentId, prompt: entry.prompt, intervalMs: entry.intervalMs })
+      void agentIdForLog
+      return true
+    }
+
+    /** 恢复一条 loop：重挂定时器、清 paused、lastDeliveredAt 重置为 now（不补投）。 */
+    function resumeLoop(loopId, agent) {
+      const entry = persisted.get(loopId)
+      if (entry === undefined || entry.paused !== true) return false
+      const host = agent ?? ctx.agents.get(entry.agentId)
+      if (host === undefined) return false
+      entry.paused = false
+      delete entry.pausedAt
+      entry.lastDeliveredAt = Date.now()
+      entry.updatedAt = entry.lastDeliveredAt
+      persistAll()
+      remount(entry, host)
+      appendHistory('resumed', loopId, { agentId: entry.agentId, prompt: entry.prompt, intervalMs: entry.intervalMs })
+      return true
+    }
+
     /** 停一个 agent 的全部 loop（显式意图 = 全部永久删除）；返回停掉数量。 */
     function stopAgentLoops(agent) {
       let stopped = 0
@@ -251,8 +285,8 @@ export default {
       const liveIds = new Set(live.map(state => state.id))
       const dormant = [...persisted.values()]
         .filter(entry => entry.agentId === agent.id && !liveIds.has(entry.id))
-        .map(entry => ({ id: entry.id, agent, prompt: entry.prompt, intervalMs: entry.intervalMs }))
-      return [...live.map(state => ({ id: state.id, agent, prompt: state.entry.prompt, intervalMs: state.entry.intervalMs })), ...dormant]
+        .map(entry => ({ id: entry.id, agent, prompt: entry.prompt, intervalMs: entry.intervalMs, paused: entry.paused === true }))
+      return [...live.map(state => ({ id: state.id, agent, prompt: state.entry.prompt, intervalMs: state.entry.intervalMs, paused: false })), ...dormant]
     }
 
     function startLoop(agent, prompt, intervalMs) {
@@ -338,26 +372,36 @@ export default {
             let body = ''
             for await (const chunk of req) body += String(chunk)
             let id = ''
+            let action = 'stop'
             try {
-              id = String((JSON.parse(body) ?? {}).id ?? '').trim()
+              const parsed = JSON.parse(body) ?? {}
+              id = String(parsed.id ?? '').trim()
+              if (typeof parsed.action === 'string' && ['stop', 'pause', 'resume'].includes(parsed.action)) {
+                action = parsed.action
+              }
             } catch {
               // 非 JSON body → 视为空 id（下面 400）。
             }
             if (id === '') {
               res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
-              res.end(JSON.stringify({ error: 'stop needs a loop id' }))
+              res.end(JSON.stringify({ error: `${action} needs a loop id` }))
               return
             }
-            const stopped = stopLoop(id)
-            res.writeHead(stopped ? 200 : 404, { 'content-type': 'application/json; charset=utf-8' })
-            res.end(JSON.stringify({ ok: stopped, id }))
+            const applied = action === 'pause'
+              ? pauseLoop(id)
+              : action === 'resume'
+                ? resumeLoop(id)
+                : stopLoop(id)
+            res.writeHead(applied ? 200 : 404, { 'content-type': 'application/json; charset=utf-8' })
+            res.end(JSON.stringify({ ok: applied, id, action }))
             return
           }
           const sessionId = url.searchParams.get('sessionId') ?? ''
           const now = Date.now()
           const rows = []
-          const rowOf = (id, agentId, prompt, intervalMs, lastDeliveredAt) => {
-            const nextTick = lastDeliveredAt === undefined
+          const rowOf = (id, agentId, prompt, intervalMs, lastDeliveredAt, entry) => {
+            const paused = entry?.paused === true
+            const nextTick = paused || lastDeliveredAt === undefined
               ? now
               : lastDeliveredAt + intervalMs
             rows.push({
@@ -365,13 +409,14 @@ export default {
               agentId,
               prompt,
               intervalMs,
-              intervalText: formatInterval(intervalMs),
+              intervalText: paused ? '已暂停' : formatInterval(intervalMs),
               nextTickAt: nextTick,
+              ...(paused ? { paused: true, pausedAt: entry.pausedAt } : {}),
             })
           }
           for (const [loopId, state] of loops) {
             if (sessionId !== '' && state.agent.id !== sessionId) continue
-            rowOf(loopId, state.agent.id, state.entry.prompt, state.entry.intervalMs, state.entry.lastDeliveredAt)
+            rowOf(loopId, state.agent.id, state.entry.prompt, state.entry.intervalMs, state.entry.lastDeliveredAt, state.entry)
           }
           // 未重挂的存量定义也上报（用户看得到、POST 可停）——恢复中的
           // 循环不是幽灵。
@@ -379,7 +424,7 @@ export default {
           for (const entry of persisted.values()) {
             if (liveIds.has(entry.id)) continue
             if (sessionId !== '' && entry.agentId !== sessionId) continue
-            rowOf(entry.id, entry.agentId, entry.prompt, entry.intervalMs, entry.lastDeliveredAt)
+            rowOf(entry.id, entry.agentId, entry.prompt, entry.intervalMs, entry.lastDeliveredAt, entry)
           }
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
           res.end(JSON.stringify({ loops: rows }))
@@ -430,6 +475,22 @@ export default {
             ? { kind: 'success', text: `Stopped ${stopped} loop${stopped > 1 ? 's' : ''}.` }
             : { kind: 'error', text: 'No active loop to stop.' }
         }
+        const pauseMatch = /^pause\s+(\S+)$/.exec(raw)
+        if (pauseMatch !== null) {
+          const target = pauseMatch[1]
+          const hit = agentLoops(invocation.agent).find(s => s.id === target)
+          return hit !== undefined && pauseLoop(hit.id)
+            ? { kind: 'success', text: `Loop ${target} paused.` }
+            : { kind: 'error', text: `No active loop with id ${target}.` }
+        }
+        const resumeMatch = /^resume\s+(\S+)$/.exec(raw)
+        if (resumeMatch !== null) {
+          const target = resumeMatch[1]
+          const hit = agentLoops(invocation.agent).find(s => s.id === target)
+          return hit !== undefined && resumeLoop(hit.id, invocation.agent)
+            ? { kind: 'success', text: `Loop ${target} resumed.` }
+            : { kind: 'error', text: `No paused loop with id ${target}.` }
+        }
         if (raw === 'clear') {
           const stopped = stopAgentLoops(invocation.agent)
           return stopped > 0
@@ -451,7 +512,7 @@ export default {
     /** 工具：模型自调节入口（start/stop/status/list）。 */
     ctx.tools.register(defineTool({
       name: 'loop',
-      description: 'Start, stop, or inspect scheduled loops on the current agent. '
+      description: 'Start, stop, pause, resume, or inspect scheduled loops on the current agent. '
         + 'Multiple loops may run in parallel; start creates a new one each time. '
         + 'A loop re-delivers a prompt every interval; use it for polling, PR babysitting, '
         + 'or build-fix-test cycles. The model may adjust the interval or stop the loop '
@@ -492,6 +553,22 @@ export default {
             }
             const stopped = stopAgentLoops(agent)
             return stopped > 0 ? `stopped ${stopped} loop${stopped > 1 ? 's' : ''}` : 'no active loop'
+          }
+          case 'pause': {
+            const target = typeof args.loop_id === 'string' ? args.loop_id : undefined
+            if (target === undefined) throw new Error('loop pause needs loop_id')
+            const hit = agentLoops(agent).find(s => s.id === target)
+            return hit !== undefined && pauseLoop(hit.id)
+              ? `loop ${target} paused`
+              : `no active loop with id ${target}`
+          }
+          case 'resume': {
+            const target = typeof args.loop_id === 'string' ? args.loop_id : undefined
+            if (target === undefined) throw new Error('loop resume needs loop_id')
+            const hit = agentLoops(agent).find(s => s.id === target)
+            return hit !== undefined && resumeLoop(hit.id, agent)
+              ? `loop ${target} resumed`
+              : `no paused loop with id ${target}`
           }
           case 'status':
           case 'list': {

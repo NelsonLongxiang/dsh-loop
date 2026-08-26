@@ -156,3 +156,86 @@ const readStore = () => JSON.parse(readFileSync(storeFile, 'utf8'))
   assert.equal(sweptRow.reason, 'stale')
   console.log('scenario 5 (append-only event ledger created/stopped/swept/remounted): OK')
 }
+
+// ---- 场景 6：暂停/恢复三态（paused 定义保留、不投递、豁免淘汰；resume 从 now 起算）----
+{
+  const { writeFileSync } = await import('node:fs')
+  const ctx = makeCtx()
+  mod.default.apply(ctx)
+  const agent = makeAgent('sess-P')
+  ctx.agents.map.set('sess-P', agent)
+  const started = ctx._command.handler({ agent, rawInput: '30m watch the thing' })
+  const loopId = /^\S+ started/.exec(started.text)?.[0]?.split(' ')[0]
+  assert.ok(loopId, 'loop started: ' + started.text)
+
+  // pause：定义保留、运行态卸下、不再投递
+  const paused = ctx._command.handler({ agent, rawInput: 'pause ' + loopId })
+  assert.match(paused.text, /paused/)
+  assert.equal(readStore().loops.length, 1)
+  assert.equal(agent.followups.length, 1, 'pause does not deliver')
+  assert.equal(readStore().loops[0].paused, true)
+  assert.equal(typeof readStore().loops[0].pausedAt, 'number')
+
+  // sweep 豁免：把 updatedAt 拨回 8 天前再扫，paused 不被淘汰
+  const store = readStore()
+  for (const loop of store.loops) loop.updatedAt = Date.now() - 8 * 24 * 3600 * 1000
+  writeFileSync(storeFile, JSON.stringify(store))
+  const intervals = ctx._intervals
+  intervals[intervals.length - 1]()
+  assert.equal(readStore().loops.length, 1, 'paused survives stale sweep')
+
+  // resume：重挂 + lastDeliveredAt=now（从 now 起算，不补投）
+  const resumed = ctx._command.handler({ agent, rawInput: 'resume ' + loopId })
+  assert.match(resumed.text, /resumed/)
+  assert.equal(readStore().loops.length, 1)
+  assert.ok(readStore().loops[0].paused === undefined || readStore().loops[0].paused === false)
+  const idleGap = Date.now() - readStore().loops[0].lastDeliveredAt
+  assert.ok(idleGap < 5_000, 'resume resets lastDeliveredAt to now, got gap=' + idleGap)
+  // 重启：active 条目正常重挂（对照面）
+  const ctx2 = makeCtx()
+  mod.default.apply(ctx2)
+  ctx2.agents.map.set('sess-P', agent)
+
+  // paused 跨重启仍 paused：restart 后无重挂投递
+  ctx._command.handler({ agent, rawInput: 'pause ' + loopId })
+  const ctx3 = makeCtx()
+  mod.default.apply(ctx3)
+  ctx3.agents.map.set('sess-P', agent)
+  assert.equal(readStore().loops[0].paused, true, 'paused survives restart')
+  assert.equal(readStore().loops[0].lastDeliveredAt > 0, true)
+  console.log('scenario 6 (pause keeps definition no-delivery sweep-exempt; resume re-mounts from now; paused survives restart): OK')
+}
+
+// ---- 场景 7：POST action 扩展（pause/resume）+ 旧 body 兼容 ----
+{
+  const ctx = makeCtx()
+  mod.default.apply(ctx)
+  const agent = makeAgent('sess-Q')
+  ctx.agents.map.set('sess-Q', agent)
+  const started = ctx._command.handler({ agent, rawInput: '15m post action probe' })
+  const loopId = /^\S+ started/.exec(started.text)?.[0]?.split(' ')[0]
+
+  const call = async (payload) => {
+    const chunks = []
+    const res = { writeHead(c) { this.code = c }, end(b) { chunks.push(b) } }
+    await ctx._routes[0].handler({ method: 'POST', url: '/plugins/dsh-loop/loops', [Symbol.asyncIterator]() { return (async function* () { yield JSON.stringify(payload) })() } }, res)
+    return { code: res.code, body: JSON.parse(chunks.join('')) }
+  }
+
+  const pausedRes = await call({ id: loopId, action: 'pause' })
+  assert.equal(pausedRes.code, 200)
+  assert.equal(pausedRes.body.action, 'pause')
+  assert.equal(readStore().loops.find(l => l.id === loopId).paused, true)
+
+  const resumedRes = await call({ id: loopId, action: 'resume' })
+  assert.equal(resumedRes.code, 200)
+  assert.equal(readStore().loops.find(l => l.id === loopId).paused !== true, true)
+
+  // 旧 body（无 action 字段）= stop 旧语义
+  const stopRes = await call({ id: loopId })
+  assert.equal(stopRes.code, 200)
+  assert.equal(stopRes.body.action ?? 'stop', 'stop')
+  assert.equal(readStore().loops.some(l => l.id === loopId), false)
+  console.log('scenario 7 (POST action pause/resume + legacy stop body compat): OK')
+}
+

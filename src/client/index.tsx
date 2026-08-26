@@ -7,7 +7,7 @@
 // --dsw-specific-tip 背景、官方 icon（IconRefreshOutline16）+ StateDot
 // （ongoing 活动指示）。有循环显示「● ⟳ 循环中 · prompt · 5m · 下次 23s」，
 // 无则 null。零官方改动。
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Context } from 'cordis'
 import type { ReactNode } from 'react'
 import { IconCloseOutline16, IconRefreshOutline16, StateDot, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -40,6 +40,9 @@ const POLL_IDLE_MS = 300_000
 const NS = 'loop'
 const zh = {
   'active': '循环中',
+  'paused': '已暂停',
+  'pause': '暂停循环',
+  'resume': '恢复循环',
   'next': '下次 {countdown}',
   'loops.running': '{count} 个循环运行中',
   'open': '展开',
@@ -50,6 +53,9 @@ const zh = {
 type LoopKey = keyof typeof zh
 const en = {
   'active': 'Looping',
+  'paused': 'Paused',
+  'pause': 'Pause loop',
+  'resume': 'Resume loop',
   'next': 'next {countdown}',
   'loops.running': '{count} loop(s) running',
   'open': 'Expand',
@@ -70,14 +76,18 @@ interface WireLoop {
   intervalMs: number
   intervalText: string
   nextTickAt: number
+  paused?: boolean
+  pausedAt?: number
 }
 
 /** 会话级轮询 hook：自调度拉取 Node half 路由，返回该会话的活动 loop。
  * 空闲退避：连续空返回（loops:[]）→ 间隔退到 POLL_IDLE_MS（5min）；非空
  * 返回立即回 60s。后台 tab（document.hidden）整段停轮，回前台立即补一次。
  * sessionId 切换由 effect 重建自然重置（cleanup 清定时器+监听器）。 */
-function useSessionLoops(sessionId: string): WireLoop[] {
+function useSessionLoops(sessionId: string): { loops: WireLoop[]; pollRef: React.RefObject<(() => Promise<void>) | undefined> } {
   const [loops, setLoops] = useState<WireLoop[]>([])
+  // 最近一次 poll 的稳定引用：操作按钮成功后主动补一轮，提升即时感。
+  const pollRef = useRef<(() => Promise<void>) | undefined>(undefined)
   useEffect(() => {
     let alive = true
     // 自调度轮询：间隔句柄可变（退避态与活跃态不同间隔）。
@@ -113,14 +123,16 @@ function useSessionLoops(sessionId: string): WireLoop[] {
       }
     }
     document.addEventListener('visibilitychange', onVisibility)
+    pollRef.current = poll
     void poll()
     return () => {
       alive = false
       clearTimer()
+      if (pollRef.current === poll) pollRef.current = undefined
       document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [sessionId])
-  return loops
+  return { loops, pollRef }
 }
 
 /** 下一次 tick 倒计时（秒）；已过则显示 0。 */
@@ -136,21 +148,22 @@ export function LoopBar(
   props: PropsRuntime<'conversation.input.dock'> & PropsLocale<'loop'>,
 ): ReactNode {
   const { t, session } = props
-  const loops = useSessionLoops(session.sessionId)
+  const { loops, pollRef } = useSessionLoops(session.sessionId)
   const [inChat, setInChat] = useState(false)
   const [open, setOpen] = useState(false)
   const [stopping, setStopping] = useState<string | null>(null)
 
-  /** 停止指定 loop（POST Node half 路由）；成功后轮询下一轮自然消失。 */
-  const stopLoop = useCallback(async (id: string): Promise<void> => {
+  /** POST {id, action} 到 Node half 路由；成功后立即补一次轮询提升即时感。 */
+  const actOnLoop = useCallback(async (id: string, action: 'stop' | 'pause' | 'resume'): Promise<void> => {
     if (stopping !== null) return
     setStopping(id)
     try {
       await fetch(LOOPS_PATH, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify({ id, action }),
       })
+      await pollRef.current?.()
     } catch {
       // 网络错误：保持状态条，用户可重试。
     } finally {
@@ -176,6 +189,7 @@ export function LoopBar(
   // 多 loop 折叠（参考 task-status）：单条直接显示；多条默认折叠为计数
   // header，点击展开列表。
   const bar = (loop: WireLoop): ReactNode => {
+    const paused = loop.paused === true
     const countdown = countdownTo(loop.nextTickAt)
     const countdownText = countdown > 0 ? `${countdown}s` : 'now'
     return (
@@ -195,6 +209,7 @@ export function LoopBar(
           background: 'var(--dsw-specific-tip)',
           fontSize: 13,
           fontFamily: 'system-ui',
+          ...(paused ? { opacity: 0.55 } : {}),
         }}
       >
         {/* 活动指示：ongoing 像素点 + 循环 icon */}
@@ -204,12 +219,12 @@ export function LoopBar(
             <IconRefreshOutline16 size={14} />
           </span>
         </span>
-        {/* 状态标签（13/24 medium，与 Todo/Queue 标题同族）+ loop id */}
+        {/* 状态标签（13/24 medium，与 Todo/Queue 标题同族）+ loop id；paused 加 ⏸ 前缀置灰 */}
         <span style={{
           flex: 'none', fontSize: 13, lineHeight: '24px', fontWeight: 500,
           color: 'var(--dsw-alias-label-primary)',
         }}>
-          {t('active')}
+          {paused ? `⏸ ${t('paused')}` : t('active')}
           <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 400, color: 'var(--dsw-alias-label-caption)' }}>{loop.id}</span>
         </span>
         {/* prompt：主文本，省略号截断 */}
@@ -219,9 +234,37 @@ export function LoopBar(
         }}>
           {loop.prompt}
         </span>
-        {/* 间隔 + 倒计时 */}
+        {/* 间隔 + 倒计时；paused 只显示「已暂停」不显示倒计时 */}
         <span style={{ flex: 'none', fontSize: 12, lineHeight: '20px', color: 'var(--dsw-alias-label-caption)', whiteSpace: 'nowrap' }}>
-          {loop.intervalText} · {t('next', { countdown: countdownText })}
+          {paused ? loop.intervalText : `${loop.intervalText} · ${t('next', { countdown: countdownText })}`}
+        </span>
+        {/* 暂停/恢复按钮：active 显 ⏸，paused 显 ▶ */}
+        <span style={{ display: 'inline-flex', flex: 'none', alignItems: 'center' }}>
+          <Tooltip label={paused ? t('resume') : t('pause')} side="bottom" delayMs={500}>
+            <button
+              type="button"
+              aria-label={paused ? t('resume') : t('pause')}
+              disabled={stopping === loop.id}
+              onClick={() => { void actOnLoop(loop.id, paused ? 'resume' : 'pause') }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                width: 24, height: 24, padding: 0, border: 'none', borderRadius: 6,
+                background: 'transparent', cursor: 'pointer', flex: 'none',
+                color: 'var(--dsw-alias-label-tertiary)',
+                transition: 'background .15s ease, color .15s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,140,.12))'
+                e.currentTarget.style.color = 'var(--dsw-alias-label-primary)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent'
+                e.currentTarget.style.color = 'var(--dsw-alias-label-tertiary)'
+              }}
+            >
+              {paused ? '▶' : '⏸'}
+            </button>
+          </Tooltip>
         </span>
         {/* 停止按钮：官方 queue/action 同款（Tooltip + icon button，右侧） */}
         <span style={{ display: 'inline-flex', flex: 'none', alignItems: 'center' }}>
@@ -230,7 +273,7 @@ export function LoopBar(
               type="button"
               aria-label={t('stop')}
               disabled={stopping === loop.id}
-              onClick={() => { void stopLoop(loop.id) }}
+              onClick={() => { void actOnLoop(loop.id, 'stop') }}
               style={{
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                 width: 24, height: 24, padding: 0, border: 'none', borderRadius: 6,

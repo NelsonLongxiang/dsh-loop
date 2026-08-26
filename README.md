@@ -69,7 +69,9 @@ Loop definitions persist to `$DSH_HOME/plugins-data/dsh-loop/loops.json` (fallin
 - Idle polling backoff: empty responses (no active loops) back the client poll off to 5 minutes; any active loop returns it to 60s. Background tabs pause polling entirely (visibilitychange).
 - Event ledger: append-only plugins-data/dsh-loop/loops.history.jsonl records created/stopped/swept/remounted events with loop metadata (v0.4.2).
 
-## Development
+- Pause/resume: each loop card gains a pause/resume toggle; paused loops keep their definition, skip delivery and stale sweeps, and resume from now.
+
+
 
 ```sh
 pnpm install
