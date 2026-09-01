@@ -184,16 +184,27 @@ export default {
         id: entry.id,
         agent,
         entry,
+        pendingCatchUp: false,
+        catchUpTimer: undefined,
         dispose: undefined,
       }
-      // 每 tick：agent 已销毁则解绑（定义保留待重挂）；忙则跳过本轮
-      // （不堆积 inbox）；空闲则 followup 投递 prompt 并刷新淘汰时钟。
+      // 每 tick：agent 已销毁则解绑（定义保留待重挂）；忙且已吞掉一整个
+      // interval（overdue）时安排短周期一次性补投定时器（min(60s,
+      // intervalMs/4)）——触发时若 idle 立即补投一次并清标志；若仍忙则续期
+      // 重试；空闲则 followup 投递 prompt 并刷新淘汰时钟。修复长忙跨 tick
+      // 导致的循环饿死（生产 12/16 OVERDUE 实证）。
       const deliver = () => {
         if (ctx.agents.get(agent.id) !== agent) {
           detach(state)
           return
         }
-        if (agent.status !== 'idle') return
+        if (agent.status !== 'idle') {
+          const last = entry.lastDeliveredAt ?? entry.createdAt
+          if (Date.now() - last >= entry.intervalMs) armCatchUp(entry)
+          return
+        }
+        state.pendingCatchUp = false
+        cancelCatchUp(state)
         entry.lastDeliveredAt = Date.now()
         entry.updatedAt = entry.lastDeliveredAt
         persistAll()
@@ -209,8 +220,40 @@ export default {
     }
 
     /** 解绑运行态（销毁定时器、移出运行 Map），定义保留在持久化面。 */
+    /** 取消补投定时器（兼容 cordis 句柄函数与 Node Timeout 两种形态）。 */
+    const cancelCatchUp = (state) => {
+      const t = state.catchUpTimer
+      if (t === undefined) return
+      if (typeof t === 'function') t()
+      else clearTimeout(t)
+      state.catchUpTimer = undefined
+    }
+    const armCatchUp = (entry) => {
+      const state = loops.get(entry.id)
+      if (state === undefined || state.catchUpTimer !== undefined) return
+      const delay = Math.max(1000, Math.min(60000, Math.floor(entry.intervalMs / 4)))
+      state.catchUpTimer = ctx.timeout(() => {
+        state.catchUpTimer = undefined
+        const live = ctx.agents.get(state.agent.id)
+        if (live !== state.agent) return
+        if (state.agent.status === 'idle') {
+          entry.pendingCatchUp = false
+          entry.lastDeliveredAt = Date.now()
+          entry.updatedAt = entry.lastDeliveredAt
+          persistAll()
+          state.agent.followup(createUserMessage({
+            content: [{ type: 'text', text: entry.prompt }],
+            source: { kind: 'plugin', plugin: PLUGIN_ID },
+          }))
+        } else {
+          armCatchUp(entry)
+        }
+      }, delay)
+    }
+
     const detach = (state) => {
       state.dispose?.()
+      cancelCatchUp(state)
       loops.delete(state.id)
     }
 
