@@ -186,21 +186,14 @@ export default {
         entry,
         dispose: undefined,
       }
-      // 每 tick：agent 已销毁则解绑（定义保留待重挂）；忙时若已吞掉一整个
-      // interval（overdue）则标记待补投——下个 tick 优先补投一次（合并
-      // overdue 轮、不追平 N 轮防风暴），修复旧代码静默丢轮导致的循环饿死；
-      // 空闲则 followup 投递 prompt 并刷新淘汰时钟。
+      // 每 tick：agent 已销毁则解绑（定义保留待重挂）；忙则跳过本轮
+      // （不堆积 inbox）；空闲则 followup 投递 prompt 并刷新淘汰时钟。
       const deliver = () => {
         if (ctx.agents.get(agent.id) !== agent) {
           detach(state)
           return
         }
-        if (agent.status !== 'idle') {
-          const last = entry.lastDeliveredAt ?? entry.createdAt
-          if (Date.now() - last >= entry.intervalMs) state.pendingCatchUp = true
-          return
-        }
-        state.pendingCatchUp = false
+        if (agent.status !== 'idle') return
         entry.lastDeliveredAt = Date.now()
         entry.updatedAt = entry.lastDeliveredAt
         persistAll()

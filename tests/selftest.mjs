@@ -1,5 +1,5 @@
 /** 自测：fake ctx 驱动真实插件模块，验证持久化/重挂/淘汰/显式删除语义。 */
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import assert from 'node:assert/strict'
@@ -239,44 +239,3 @@ const readStore = () => JSON.parse(readFileSync(storeFile, 'utf8'))
   console.log('scenario 7 (POST action pause/resume + legacy stop body compat): OK')
 }
 
-
-// ---- 场景 8：busy 跨 2 tick 饿死修复（overdue 补投一次，不追平 N 轮） ----
-{
-  const ctx = makeCtx()
-  mod.default.apply(ctx)
-  const agent = makeAgent('sess-H')
-  ctx.agents.map.set('sess-H', agent)
-  const r = ctx._command.handler({ agent, rawInput: '1s heartbeat' })
-  assert.match(r.text, /loop-\d+ started/)
-  assert.equal(agent.followups.length, 1, 'immediate first delivery')
-  const myId = readStore().loops.find(l => l.prompt === 'heartbeat').id
-  const tickAll = () => { for (const fn of ctx._intervals) fn() }
-  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
-
-  // 模拟宿主连续 turn：agent 转忙跨过 1 个完整 interval（真实流逝）——
-  // 旧代码静默丢轮；新代码标记待补投
-  agent.status = 'busy'
-  await sleep(1100)
-  tickAll()
-  tickAll()
-  assert.equal(agent.followups.length, 1, 'busy ticks do not deliver into a busy turn')
-
-  // 恢复 idle + tick：必须补投一次（合并 overdue 轮），lastDeliveredAt=now
-  agent.status = 'idle'
-  const beforeCatchUp = Date.now()
-  tickAll()
-  assert.equal(agent.followups.length, 2, 'catch-up delivered exactly once on the first idle tick')
-  const storeAfter = readStore()
-  const myLoop = storeAfter.loops.find(l => l.id === myId)
-  assert.ok(myLoop, 'scenario loop present in store')
-  console.log('DBG myLoop lastDeliveredAt =', new Date(myLoop.lastDeliveredAt).toISOString(),
-    '| beforeCatchUp =', new Date(beforeCatchUp).toISOString(),
-    '| loops in store =', storeAfter.loops.length)
-  assert.ok(myLoop.lastDeliveredAt >= beforeCatchUp, 'lastDeliveredAt refreshed to now')
-
-  // 无风暴：随后的正常 tick 正常节奏（不追平 N 轮）
-  agent.status = 'idle'
-  tickAll()
-  assert.equal(agent.followups.length, 3, 'next idle tick delivers normally (no N-round catch-up storm)')
-  console.log('scenario 8 (busy spans 2 ticks: overdue catch-up delivers once on idle, no storm): OK')
-}
