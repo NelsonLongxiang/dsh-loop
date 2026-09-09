@@ -1,4 +1,4 @@
-// acme/loop 浏览器端 half：对话页输入框上方的活动循环状态条。经
+// vlln/loop 浏览器端 half：对话页输入框上方的活动循环状态条。经
 // `conversation.input.dock`（list 槽，与 queue/todo/goal/task-status 同一
 // 官方槽家族）注册。Node half 注册只读状态路由，本组件每 1s 轮询并只渲染
 // 当前会话（agentId === session.sessionId）的活动 loop。

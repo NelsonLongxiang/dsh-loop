@@ -1,4 +1,4 @@
-// acme/loop — 定时循环插件：/loop 命令 + loop 工具，按间隔向当前 agent
+// vlln/loop — 定时循环插件：/loop 命令 + loop 工具，按间隔向当前 agent
 // 重复投递 prompt（每轮 = agent.followup 排队一次新 turn，与 goal-session
 // 同机制）。对齐 Claude Code 的 /loop 语义：固定间隔 / 自调节（模型每轮
 // 可用工具调整或停止）/ 内置维护 prompt。
@@ -10,7 +10,6 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import z from '@deepseek-ai/schemastery'
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 
 const PLUGIN_ID = 'dsh-loop'
 
@@ -21,7 +20,7 @@ export const LOOPS_PATH = '/plugins/dsh-loop/loops'
  * 设置命名空间：用户可在设置页（client half 的 settings.plugin.item「dsh-loop」
  * 卡片，位于 设置 → 插件 → 可配置）选择是否把插件工具注入模型工具集。
  */
-export const LOOP_SETTINGS_NAMESPACE = settingsNamespace('dsh-loop')
+export const LOOP_SETTINGS_NAMESPACE = 'dsh-loop'
 
 /**
  * 用户可写设置（`applies: 'live'` —— 保存即生效，无需重启：Node half watch
