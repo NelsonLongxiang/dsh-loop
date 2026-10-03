@@ -12,7 +12,7 @@
 
 ## 效果
 
-![loop 状态条（真实运行截图：多循环折叠为计数条，展开后逐条列出）](https://cdn.jsdelivr.net/gh/vlln/dsh-loop@main/docs/preview/loop.png?v=2)
+![loop 状态条（真实运行截图：多循环折叠为计数条，展开后逐条列出）](https://cdn.jsdelivr.net/gh/vlln/dsh-loop@main/docs/preview/loop.png?v=3)
 
 ## 能力
 
@@ -30,6 +30,8 @@
 | `/loop list` | 列出当前会话全部循环（含 id） |
 | `/loop stop <id>` / `/loop stop` | 停指定循环 / 停全部 |
 
+`/loop` 的回执（命令面板里的描述、`list` / 用法 / stop 输出）跟随**界面语言**：client half 把当前 locale 回传给插件，中英文按界面切换；没有客户端在场的 headless 运行保持英文。
+
 **UI**（对话页输入框上方 dock 槽）：
 
 | 功能 | 说明 |
@@ -38,7 +40,7 @@
 
 ## 设置
 
-插件自带设置卡片，位于 **设置 → 插件**（官方 `ctx.settings` 命名空间 `dsh-loop`，经 `settings.plugin.item` 槽渲染，与官方插件卡片同列表）。**每个工具一行独立的官方质感开关（Switch）**：
+插件自带设置卡片，位于 **设置 → 插件 → 本插件包页**（官方 `plugins.bundle.config` 槽，key = bundle 包名 `@vlln/dsh-loop`；设置命名空间 = 声明 `Config` schema 的条目 id `dsh-loop`）。**每个工具一行独立的官方质感开关（Switch）**：
 
 | 设置项 | 默认 | 效果 |
 |---|---|---|
@@ -46,7 +48,7 @@
 
 卡片字段由客户端 `LOOP_TOOL_FIELDS` 表驱动，Node half 的工具定义表与之一一对应——新增工具时在两端各加一条，设置页自动多出一行开关。
 
-改动在**保存后立即生效**（`applies: 'live'`）——插件 watch 该命名空间，按工具表动态注册/注销对应工具，新会话无需重启即可用上新设置。工具 schemas 在每次会话/每轮 prompt 组装时实时解析（架构上没有按 session 的快照）：存量会话的下一轮也会读到新工具集；关闭时对应工具会立即从 `tools.schemas` 消失，之前调用过它的模型下一轮起无法再调用（只能通过轮次记录对账）。`/loop` 命令（用户侧）与状态条不受影响。
+改动在**保存后立即生效**（schema 的叶标了 `.volatile()`：宿主原地提交、不重挂载条目，随后发 `loader/volatile-update`）——插件重读快照并按工具表动态注册/注销对应工具，新会话无需重启即可用上新设置。工具 schemas 在每次会话/每轮 prompt 组装时实时解析（架构上没有按 session 的快照）：存量会话的下一轮也会读到新工具集；关闭时对应工具会立即从 `tools.schemas` 消失，之前调用过它的模型下一轮起无法再调用（只能通过轮次记录对账）。`/loop` 命令（用户侧）与状态条不受影响。
 
 ## 安装
 

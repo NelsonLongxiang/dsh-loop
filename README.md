@@ -14,7 +14,7 @@ Delivers a prompt to the current agent at a fixed interval — ideal for polling
 
 ## Preview
 
-![loop status bar (real run screenshot: multiple loops collapse into a count bar, expanding lists them one by one)](https://cdn.jsdelivr.net/gh/vlln/dsh-loop@main/docs/preview/loop.png?v=2)
+![loop status bar (real run screenshot: multiple loops collapse into a count bar, expanding lists them one by one)](https://cdn.jsdelivr.net/gh/vlln/dsh-loop@main/docs/preview/loop.png?v=3)
 
 ## Features
 
@@ -32,6 +32,8 @@ Delivers a prompt to the current agent at a fixed interval — ideal for polling
 | `/loop list` | List all loops in the current session (with ids) |
 | `/loop stop <id>` / `/loop stop` | Stop a specific loop / stop all |
 
+`/loop` replies (the command-palette description, `list` / usage / stop output) follow the **UI language**: the client half relays its active locale to the plugin, so they render in Chinese or English to match the interface. Headless runs with no client in sight keep English.
+
 **UI** (dock slot above the input box on the chat page):
 
 | Feature | Description |
@@ -40,7 +42,7 @@ Delivers a prompt to the current agent at a fixed interval — ideal for polling
 
 ## Settings
 
-The plugin ships a settings card in **Settings → Plugins** (official `ctx.settings` namespace `dsh-loop`, rendered via the `settings.plugin.item` slot next to the official plugin cards). **Each tool gets its own row with an official-looking Switch:**
+The plugin ships a settings card on **Settings → Plugins → this bundle's page** (official `plugins.bundle.config` slot, keyed by the bundle package name `@vlln/dsh-loop`; the settings namespace is `dsh-loop`, the id of the entry that exports the `Config` schema). **Each tool gets its own row with an official-looking Switch:**
 
 | Setting | Default | Effect |
 |---|---|---|
@@ -48,7 +50,7 @@ The plugin ships a settings card in **Settings → Plugins** (official `ctx.sett
 
 The card fields are driven by the client `LOOP_TOOL_FIELDS` table, mirrored one-to-one by the Node-side tool definition table — adding a tool means adding one entry on each side, and the settings card grows a new switch row automatically.
 
-Changes apply as soon as you **save** (`applies: 'live'`) — the plugin watches the namespace and registers/unregisters the affected tools on the fly, so new sessions pick it up without a restart. Tool schemas are resolved live at every session/prompt assembly (there is no per-session snapshot): in-flight sessions also see the change from their next turn, and turning a tool off drops it from `tools.schemas` immediately, so a model that called it earlier can no longer reach it (they can only reconcile that through the turn record). The `/loop` command (user side) and the status bar are unaffected.
+Changes apply as soon as you **save** (the schema's leaves are marked `.volatile()`: the host commits in place without remounting the entry and emits `loader/volatile-update`) — the plugin re-reads the snapshot and registers/unregisters the affected tools on the fly, so new sessions pick it up without a restart. Tool schemas are resolved live at every session/prompt assembly (there is no per-session snapshot): in-flight sessions also see the change from their next turn, and turning a tool off drops it from `tools.schemas` immediately, so a model that called it earlier can no longer reach it (they can only reconcile that through the turn record). The `/loop` command (user side) and the status bar are unaffected.
 
 ## Installation
 
