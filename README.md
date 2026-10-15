@@ -39,6 +39,7 @@ Delivers a prompt to the current agent at a fixed interval — ideal for polling
 | Feature | Description |
 |---|---|
 | Active status bar | Single loop: `● ⟳ looping · <prompt> · 5m · next in 23s`; multiple loops collapse into a count bar "N loops running · expand", click to expand the list |
+| `/` menu row icon | Typing `/` in the composer shows the ⟳ icon at the left of the `/loop` row (same position and size as every other command row) |
 
 ## Settings
 
@@ -58,10 +59,17 @@ Changes apply as soon as you **save** (the schema's leaves are marked `.volatile
 
 ```sh
 dsh plugin --profile web add "github:vlln/dsh-loop#main"   # one-line git source (build artifacts committed)
-# or npm source: dsh plugin --profile web add @vlln/dsh-loop@0.3.0
+# or npm source: dsh plugin --profile web add @vlln/dsh-loop@0.4.2
 ```
 
 Or from a local directory (when you have the source): `git clone`, then `cd dsh-loop && dsh plugin --profile web add .`.
+
+## Compatibility
+
+| dsh version | Status |
+|---|---|
+| `0.2.0-rc.2` | ✅ Verified (migrated against 0.2.0 on 2026-10-03; command surface re-checked 2026-10-15) |
+| Other versions | ⚠️ Unverified — if the `/loop` menu row loses its icon after a dsh upgrade (the command itself still works), upstream renamed an internal client command-surface method and the plugin silently falls back to the official fallback look |
 
 After installing, **restart web** for it to take effect (bundles are composed at startup); afterwards you can disable/enable it from the "Plugins" panel on the settings page (takes effect at runtime + persisted).
 

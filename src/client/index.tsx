@@ -21,6 +21,10 @@
 // 传输走 `ctx.configForms.get(<条目 id>)`（条目 id `dsh-loop` 即设置命名空间，
 // 由 Node half 导出的 Config schema 声明）。旧 settingsScope /
 // settings.plugin.item 缝已退役，本插件不再引用。
+//
+// `/loop` 菜单行图标经 `commandUi.candidates` 出口贴面（见 installCommandRowFace）：
+// 官方只给六个一等公民宿主命令配了行外观，第三方宿主命令没有注册入口，同名客户端
+// 贡献会 fail loud。贴面只重写本插件那一行，上游改动时自动降级为官方回退外观。
 import { useCallback, useEffect, useState } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { CSSProperties, ReactNode } from 'react'
@@ -805,6 +809,52 @@ export function LoopSettingsCard(
   )
 }
 
+/** 本插件宿主命令的名字（与 Node half `ctx.commands.register({ name: 'loop' })` 同源）。 */
+const COMMAND_NAME = 'loop'
+
+/** 候选行里本插件要重写的字段（其余字段原样透传）。 */
+interface CommandRow { readonly name?: string; readonly icon?: unknown }
+
+/**
+ * 候选合成出口的最小面：`ui-commands` 把 `/` 源注册成
+ * `candidates: (session, req) => this.candidates(session, req)`（调用时才解引用），
+ * 因此在实例上覆盖该方法即可介入候选行。
+ */
+interface CommandUiRowFace {
+  candidates?: (session: unknown, req: unknown) => Promise<readonly CommandRow[]>
+}
+
+/**
+ * 给本插件的**宿主命令**行贴图标；返回还原函数。
+ *
+ * 为什么需要这一步：官方把宿主命令行在 `/` 菜单里的外观（label / description /
+ * icon）锁在 `dsh-client-ui-commands` 的 `presentation.ts`——一张硬编码的一等公民
+ * 表 `HOST_FACES`，只列 goal / plan / feedback / compact / permission / export
+ * 六个，按 `definitionId` 命中；`CommandDescriptor` 本身没有图标字段。第三方宿主
+ * 命令没有官方入口拿这枚图标：同名注册客户端贡献会在候选合成阶段 fail loud
+ * （`contribution /loop collides with a host command`，整组「指令」一起消失），
+ * `commandUi.decorate` 只换裸调用行为、不换行外观。
+ *
+ * 所以这里只在候选合成出口包一层，**只重写本插件那一行**：不碰命令目录、不碰派发、
+ * 不碰命令生命周期，不新增命令、不写 DOM、不引 timer。前提任一不成立（服务缺席、
+ * 上游把 `candidates` 改名或私有化、导出不是函数）就返回空还原器——包装不生效，
+ * 该行自动回落到官方回退外观（name + 宿主 description），功能不受影响。
+ */
+function installCommandRowFace(commandUi: unknown): () => void {
+  const runtime = commandUi as CommandUiRowFace | undefined
+  const original = runtime?.candidates
+  if (runtime === undefined || typeof original !== 'function') return () => {}
+  const face = async (session: unknown, req: unknown): Promise<readonly CommandRow[]> => {
+    const rows = await original.call(runtime, session, req)
+    // 只改自己那一行；官方行与其他插件的行保持原内容不变。
+    return rows.map(row => (row?.name === COMMAND_NAME ? { ...row, icon: IconRefreshOutlineRegular } : row))
+  }
+  runtime.candidates = face
+  return () => {
+    if (runtime.candidates === face) runtime.candidates = original
+  }
+}
+
 /** 需要此插件声明的服务：slots（槽注册）+ locale（文案）+ configForms（设置读写传输）。 */
 export const inject = ['slots', 'locale', 'configForms']
 
@@ -857,4 +907,14 @@ export function apply(ctx: Context): void {
           discard: loopForm.discard,
         }),
       }, LoopSettingsCard))), 'loop: settings card')
+
+  // `/loop` 在 `/` 菜单里的行外观（图标）。宿主命令没有官方图标入口，只能在候选
+  // 合成出口贴面（理由与降级契约见 installCommandRowFace）。走嵌套
+  // `ctx.inject`：没有命令目录的 composition（服务缺席）里这段代码永不执行。
+  ctx.inject(['commandUi'], (commandScope) => {
+    commandScope.effect(
+      () => installCommandRowFace(commandScope.get('commandUi')),
+      'loop: command row face',
+    )
+  })
 }
