@@ -12,6 +12,7 @@ const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
 
 function makeCtx() {
   const intervals = []
+    const timeouts = []
   const listeners = new Map()
   const routes = []
   const agents = new Map()
@@ -19,6 +20,7 @@ function makeCtx() {
     effect: (fn) => { fn(); return () => {} },
     on: (name, fn) => { (listeners.get(name) ?? listeners.set(name, []).get(name)).push(fn) },
     interval: (fn, _ms) => { intervals.push(fn); return () => { const i = intervals.indexOf(fn); if (i >= 0) intervals.splice(i, 1) } },
+    timeout: (fn, _ms) => { const t = setTimeout(() => fn(), _ms); return () => clearTimeout(t) },
     agents: {
       map: agents,
       get: (id) => agents.get(id),
@@ -237,5 +239,35 @@ const readStore = () => JSON.parse(readFileSync(storeFile, 'utf8'))
   assert.equal(stopRes.body.action ?? 'stop', 'stop')
   assert.equal(readStore().loops.some(l => l.id === loopId), false)
   console.log('scenario 7 (POST action pause/resume + legacy stop body compat): OK')
+}
+
+// ---- 场景 8：饿死修复——短周期补投定时器在「无 tick 落在 idle 窗口」时投递 ----
+{
+  const ctx = makeCtx()
+  mod.apply(ctx)
+  const agent = makeAgent('sess-H')
+  ctx.agents.map.set('sess-H', agent)
+  const r = ctx._command.handler({ agent, rawInput: '1s heartbeat' })
+  assert.match(r.text, /loop-\d+ started/)
+  assert.equal(agent.followups.length, 1, 'immediate first delivery')
+  const myId = readStore().loops.find(l => l.prompt === 'heartbeat').id
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+  const tickAll = () => { for (const fn of ctx._intervals) fn() }
+
+  // 宿主转 busy 跨过整个 interval（真实流逝 1.1s）→ tick 触发 overdue →
+  // 武装短补投定时器；busy tick 本身不投（旧代码的行为终点）
+  agent.status = 'busy'
+  await sleep(1100)
+  tickAll()
+  assert.equal(agent.followups.length, 1, 'busy tick does not deliver into a busy turn')
+
+  // 鉴别核心：agent 恢复 idle 但【无任何 tick 触发】——补投定时器必须自行投递
+  // （旧代码此场景 followups 恒 1，永不恢复）
+  agent.status = 'idle'
+  await sleep(1300)
+  assert.equal(agent.followups.length, 2, 'catch-up timer delivered without any tick')
+  const myLoop = readStore().loops.find(l => l.id === myId)
+  assert.ok(myLoop.lastDeliveredAt >= Date.now() - 1500, 'lastDeliveredAt refreshed by the timer delivery')
+  console.log('scenario 8 (timer-driven catch-up delivers on idle without any tick): OK')
 }
 
