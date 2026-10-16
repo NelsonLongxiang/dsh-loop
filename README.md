@@ -43,7 +43,7 @@ Delivers a prompt to the current agent at a fixed interval — ideal for polling
 
 ## Settings
 
-The plugin ships a settings card on **Settings → Plugins → this bundle's page** (official `plugins.bundle.config` slot, keyed by the bundle package name `@vlln/dsh-loop`; the settings namespace is `dsh-loop`, the id of the entry that exports the `Config` schema). **Each tool gets its own row with an official-looking Switch:**
+The plugin ships a settings card on **Settings → Plugins → this bundle's page** (official `plugins.bundle.config` slot, keyed by the bundle package name `@nelsonlongxiang/dsh-loop`; the settings namespace is `dsh-loop`, the id of the entry that exports the `Config` schema). **Each tool gets its own row with an official-looking Switch:**
 
 | Setting | Default | Effect |
 |---|---|---|

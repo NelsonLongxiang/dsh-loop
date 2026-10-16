@@ -41,7 +41,7 @@
 
 ## 设置
 
-插件自带设置卡片，位于 **设置 → 插件 → 本插件包页**（官方 `plugins.bundle.config` 槽，key = bundle 包名 `@vlln/dsh-loop`；设置命名空间 = 声明 `Config` schema 的条目 id `dsh-loop`）。**每个工具一行独立的官方质感开关（Switch）**：
+插件自带设置卡片，位于 **设置 → 插件 → 本插件包页**（官方 `plugins.bundle.config` 槽，key = bundle 包名 `@nelsonlongxiang/dsh-loop`；设置命名空间 = 声明 `Config` schema 的条目 id `dsh-loop`）。**每个工具一行独立的官方质感开关（Switch）**：
 
 | 设置项 | 默认 | 效果 |
 |---|---|---|
