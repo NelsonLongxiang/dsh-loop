@@ -1,6 +1,6 @@
 {
   "name": "@nelsonlongxiang/dsh-loop",
-  "description": "定时循环插件：/loop 命令 + loop 工具 + 活动状态条（官方 dock 槽）",
+  "description": "定时循环插件：/loop 命令 + loop 工具 + 活动状态条（官方 dock 槽）+ 设置页（工具暴露开关）",
   "version": "0.4.5",
   "type": "module",
   "main": "lib/index.mjs",
@@ -25,23 +25,19 @@
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-slots",
-        "@deepseek-ai/dsh-client-locale"
-      ],
       "platform": "web"
     }
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "( ^4.0.1 ) || >=0.2.0-rc.1",
     "@deepseek-ai/dsh-llm": "( ^0.1.0-rc.6 ) || >=0.2.0-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.1",
     "@deepseek-ai/dsh-tools": "( ^0.1.0-rc.6 ) || >=0.2.0-rc.1",
     "react": "^18.2.0"
   },
   "engines": {
     "node": ">=22.19.0",
-    "dsh": ">=0.1.0-rc.5"
+    "dsh": ">=0.2.0-rc.1"
   },
   "scripts": {
     "build": "tsdown --config ./tsdown.config.ts"

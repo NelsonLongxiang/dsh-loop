@@ -50,7 +50,7 @@ const readStore = () => JSON.parse(readFileSync(storeFile, 'utf8'))
 // ---- 场景 1：创建即持久化 ----
 {
   const ctx = makeCtx()
-  mod.default.apply(ctx)
+  mod.apply(ctx)
   const agent = makeAgent('sess-A')
   ctx.agents.map.set('sess-A', agent)
   const r = ctx._command.handler({ agent, rawInput: '5m check the deploy' })
@@ -69,7 +69,7 @@ const readStore = () => JSON.parse(readFileSync(storeFile, 'utf8'))
 // ---- 场景 2：重启后 agent 未恢复 → 定义在；恢复（agent/created）→ 重挂并投递 ----
 {
   const ctx = makeCtx()
-  mod.default.apply(ctx)
+  mod.apply(ctx)
   // 载入存量但 agent 不在：GET 可见（休眠行），seq 不撞号
   const agent2 = makeAgent('sess-A')
   ctx.agents.map.set('sess-A', agent2)
@@ -90,7 +90,7 @@ const readStore = () => JSON.parse(readFileSync(storeFile, 'utf8'))
 // ---- 场景 3：agent 销毁 → 解绑但定义保留；淘汰窗口后清扫删除 ----
 {
   const ctx = makeCtx()
-  mod.default.apply(ctx)
+  mod.apply(ctx)
   const agent = makeAgent('sess-B')
   ctx.agents.map.set('sess-B', agent)
   const first = ctx._command.handler({ agent, rawInput: '10m babysit PR' })
@@ -98,9 +98,9 @@ const readStore = () => JSON.parse(readFileSync(storeFile, 'utf8'))
   assert.match(first.text, /loop-1 started/)
   assert.match(second.text, /loop-2 started/, 'seq increments within a process')
   assert.equal(readStore().loops.length, 2)
-  // 销毁：定义保留
+  // 销毁：定义保留（0.2.0 起 payload 形如 { agent }）
   ctx.agents.map.delete('sess-B')
-  ctx._emit('agent/disposed', agent)
+  ctx._emit('agent/disposed', { agent })
   assert.equal(readStore().loops.length, 2, 'definitions survive disposal')
   // 把 updatedAt 拨回 8 天前，触发清扫 interval（最后一个 interval 是 sweep）
   const store = readStore()
@@ -109,7 +109,7 @@ const readStore = () => JSON.parse(readFileSync(storeFile, 'utf8'))
   writeFileSync(storeFile, JSON.stringify(store))
   // 重新 apply 模拟重启（load 时清扫）
   const ctx2 = makeCtx()
-  mod.default.apply(ctx2)
+  mod.apply(ctx2)
   assert.equal(readStore().loops.length, 0, 'stale entry evicted on load')
   console.log('scenario 3 (disposal keeps definition, stale eviction on reload): OK')
 }
@@ -117,7 +117,7 @@ const readStore = () => JSON.parse(readFileSync(storeFile, 'utf8'))
 // ---- 场景 4：POST stop 休眠定义（重启后未恢复时经状态条停） ----
 {
   const ctx = makeCtx()
-  mod.default.apply(ctx)
+  mod.apply(ctx)
   assert.equal(readStore().loops.length, 0)
   const agent = makeAgent('sess-C')
   ctx.agents.map.set('sess-C', agent)
@@ -126,7 +126,7 @@ const readStore = () => JSON.parse(readFileSync(storeFile, 'utf8'))
   assert.ok(loopId, 'loop started: ' + started.text)
   // 模拟重启（无 agent）→ 休眠；POST stop 应删定义返回 200
   const ctx2 = makeCtx()
-  mod.default.apply(ctx2)
+  mod.apply(ctx2)
   const chunks = []
   const res = { writeHead(c) { this.code = c }, end(b) { chunks.push(b) } }
   await ctx2._routes[0].handler({ method: 'POST', url: '/plugins/dsh-loop/loops', [Symbol.asyncIterator]() { return (async function* () { yield JSON.stringify({ id: loopId }) })() } }, res)
@@ -161,7 +161,7 @@ const readStore = () => JSON.parse(readFileSync(storeFile, 'utf8'))
 {
   const { writeFileSync } = await import('node:fs')
   const ctx = makeCtx()
-  mod.default.apply(ctx)
+  mod.apply(ctx)
   const agent = makeAgent('sess-P')
   ctx.agents.map.set('sess-P', agent)
   const started = ctx._command.handler({ agent, rawInput: '30m watch the thing' })
@@ -193,13 +193,13 @@ const readStore = () => JSON.parse(readFileSync(storeFile, 'utf8'))
   assert.ok(idleGap < 5_000, 'resume resets lastDeliveredAt to now, got gap=' + idleGap)
   // 重启：active 条目正常重挂（对照面）
   const ctx2 = makeCtx()
-  mod.default.apply(ctx2)
+  mod.apply(ctx2)
   ctx2.agents.map.set('sess-P', agent)
 
   // paused 跨重启仍 paused：restart 后无重挂投递
   ctx._command.handler({ agent, rawInput: 'pause ' + loopId })
   const ctx3 = makeCtx()
-  mod.default.apply(ctx3)
+  mod.apply(ctx3)
   ctx3.agents.map.set('sess-P', agent)
   assert.equal(readStore().loops[0].paused, true, 'paused survives restart')
   assert.equal(readStore().loops[0].lastDeliveredAt > 0, true)
@@ -209,7 +209,7 @@ const readStore = () => JSON.parse(readFileSync(storeFile, 'utf8'))
 // ---- 场景 7：POST action 扩展（pause/resume）+ 旧 body 兼容 ----
 {
   const ctx = makeCtx()
-  mod.default.apply(ctx)
+  mod.apply(ctx)
   const agent = makeAgent('sess-Q')
   ctx.agents.map.set('sess-Q', agent)
   const started = ctx._command.handler({ agent, rawInput: '15m post action probe' })
