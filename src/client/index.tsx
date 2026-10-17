@@ -115,6 +115,7 @@ const zh = {
   'stop': '停止循环',
   'edit': '编辑循环',
   'editPrompt': '新指令…',
+  'editInterval': '间隔',
   'confirm': '保存',
   'cancel': '取消',
 } satisfies Record<string, string>
@@ -132,6 +133,7 @@ const en = {
   'stop': 'Stop loop',
   'edit': 'Edit loop',
   'editPrompt': 'New prompt…',
+  'editInterval': 'Interval',
   'confirm': 'Save',
   'cancel': 'Cancel',
 } satisfies Record<string, string>
@@ -281,6 +283,19 @@ function countdownTo(nextTickAt: number): number {
   return Math.max(0, Math.ceil((nextTickAt - Date.now()) / 1000))
 }
 
+/**
+ * intervalMs → 可回填编辑框的间隔 token（整数 + s/m/h/d 单位），与服务端
+ * parseIntervalMs 同规可逆（服务端另接受裸数字=分钟，回填始终带单位）。非整分
+ * 值回落到秒（如 90s），永不产生 "1.5h" 这类服务端解析不了的形态。
+ */
+function intervalToToken(ms: number): string {
+  const units: ReadonlyArray<readonly [string, number]> = [['d', 86_400_000], ['h', 3_600_000], ['m', 60_000], ['s', 1_000]]
+  for (const [suffix, size] of units) {
+    if (ms >= size && ms % size === 0) return `${ms / size}${suffix}`
+  }
+  return `${Math.max(1, Math.round(ms / 1_000))}s`
+}
+
 // ── dock 卡片 chrome（规格来源：同槽官方邻居 GoalBar.module.css 的 `.bar`）──
 // 单循环 bar 与多循环折叠卡共用同一表面：无边框 + md 圆角 + elevation 阴影
 // （描边色走 `--dsw-elevation-stroke-color`）+ meta 面 + backdrop 模糊。
@@ -428,7 +443,7 @@ export function LoopBar(
   const [stopping, setStopping] = useState<string | null>(null)
 
   /** POST {id, action, ...extra} 到 Node half 路由；成功后立即补一次轮询提升即时感。 */
-  const actOnLoop = useCallback(async (id: string, action: 'stop' | 'pause' | 'resume' | 'edit', extra?: { prompt?: string }): Promise<void> => {
+  const actOnLoop = useCallback(async (id: string, action: 'stop' | 'pause' | 'resume' | 'edit', extra?: { prompt?: string; interval?: string }): Promise<void> => {
     if (stopping !== null) return
     setStopping(id)
     try {
@@ -445,44 +460,79 @@ export function LoopBar(
     }
   }, [stopping])
 
-  // 指令编辑态（单条 bar 与展开行共用）：editingId = 正在编辑的 loop id。
+  // 指令/间隔编辑态（单条 bar 与展开行共用）：editingId = 正在编辑的 loop id。
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const [draftInterval, setDraftInterval] = useState('')
+  /** 间隔 token 合法性（与服务端 parseIntervalMs 同规：整数 + s/m/h/d，缺省分钟）。 */
+  const intervalTokenValid = (token: string): boolean => /^\d+[smhd]?$/.test(token)
   const startEdit = (loop: WireLoop): void => {
     setEditingId(loop.id)
     setDraft(loop.prompt)
+    setDraftInterval(intervalToToken(loop.intervalMs))
   }
   const cancelEdit = (): void => {
     setEditingId(null)
     setDraft('')
+    setDraftInterval('')
   }
-  /** 提交编辑：空草稿 = 取消（指令不允许改空）；成功后 actOnLoop 内会补一次轮询。 */
+  /**
+   * 提交编辑：两个草稿都空 = 取消；间隔 token 非法 = 停在编辑态等修正（红边 +
+   * ✓ 禁用双提示）。指令留空只改间隔；间隔留空只改指令；成功后 actOnLoop 内会
+   * 补一次轮询。
+   */
   const commitEdit = (id: string): void => {
-    const next = draft.trim()
-    if (next === '' || stopping !== null) { cancelEdit(); return }
+    const nextPrompt = draft.trim()
+    const nextInterval = draftInterval.trim()
+    if (nextInterval !== '' && !intervalTokenValid(nextInterval)) return
+    if (nextPrompt === '' && nextInterval === '') { cancelEdit(); return }
+    if (stopping !== null) { cancelEdit(); return }
     setEditingId(null)
     setDraft('')
-    void actOnLoop(id, 'edit', { prompt: next })
+    setDraftInterval('')
+    void actOnLoop(id, 'edit', {
+      prompt: nextPrompt === '' ? undefined : nextPrompt,
+      interval: nextInterval === '' ? undefined : nextInterval,
+    })
   }
-  /** 编辑态控件：输入框（Enter 提交 / Esc 取消）+ ✓/✕。 */
-  const editControls = (loop: WireLoop): ReactNode => (
-    <>
-      <input
-        data-loop-edit-input=""
-        style={EDIT_INPUT_STYLE}
-        value={draft}
-        placeholder={t('editPrompt')}
-        aria-label={t('edit')}
-        onChange={(e) => { setDraft(e.target.value) }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') { e.preventDefault(); commitEdit(loop.id) }
-          if (e.key === 'Escape') { cancelEdit() }
-        }}
-      />
-      <BarIconButton label={t('confirm')} disabled={stopping === loop.id} onClick={() => { commitEdit(loop.id) }}>✓</BarIconButton>
-      <BarIconButton label={t('cancel')} disabled={stopping === loop.id} onClick={() => { cancelEdit() }}>✕</BarIconButton>
-    </>
-  )
+  /** 编辑态控件：指令输入框（主区）+ 间隔输入框 + ✓/✕（Enter 提交 / Esc 取消）。 */
+  const editControls = (loop: WireLoop): ReactNode => {
+    const intervalInvalid = draftInterval !== '' && !intervalTokenValid(draftInterval)
+    return (
+      <>
+        <input
+          data-loop-edit-input=""
+          style={EDIT_INPUT_STYLE}
+          value={draft}
+          placeholder={t('editPrompt')}
+          aria-label={t('edit')}
+          onChange={(e) => { setDraft(e.target.value) }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commitEdit(loop.id) }
+            if (e.key === 'Escape') { cancelEdit() }
+          }}
+        />
+        <input
+          data-loop-edit-interval=""
+          style={{
+            ...EDIT_INPUT_STYLE,
+            flex: 'none', width: 64, textAlign: 'center',
+            ...(intervalInvalid ? { borderColor: 'var(--dsw-alias-label-error)' } : {}),
+          }}
+          value={draftInterval}
+          placeholder="5m"
+          aria-label={t('editInterval')}
+          onChange={(e) => { setDraftInterval(e.target.value) }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commitEdit(loop.id) }
+            if (e.key === 'Escape') { cancelEdit() }
+          }}
+        />
+        <BarIconButton label={t('confirm')} disabled={stopping === loop.id || intervalInvalid} onClick={() => { commitEdit(loop.id) }}>✓</BarIconButton>
+        <BarIconButton label={t('cancel')} disabled={stopping === loop.id} onClick={() => { cancelEdit() }}>✕</BarIconButton>
+      </>
+    )
+  }
 
   // 对话页探针：flow 列存在性（navbar/task-status 同信号）。body 级 observer
   // 只跑 querySelector，回调轻量；view 切换（flow 移除/重建）都触发。

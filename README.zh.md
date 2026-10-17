@@ -59,7 +59,7 @@
 
 ```sh
 dsh plugin --profile web add "github:NelsonLongxiang/dsh-loop#main"   # git 源一行（构建产物已入库）
-# 或 npm 源（私仓 Gitea registry）：dsh plugin --profile web add @nelsonlongxiang/dsh-loop@0.4.8
+# 或 npm 源（私仓 Gitea registry）：dsh plugin --profile web add @nelsonlongxiang/dsh-loop@0.4.9
 ```
 
 或本地目录（有源码时）：`git clone` 后 `cd dsh-loop && dsh plugin --profile web add .`。
@@ -96,7 +96,7 @@ loop action=edit loop_id="loop-2" prompt="修另一个 test" interval="5m"
 - 空闲轮询退避：无活动循环时客户端轮询退到 5 分钟，出现活动循环即回 60s；后台标签页整段暂停轮询（visibilitychange）。
 - 事件台账：append-only 的 plugins-data/dsh-loop/loops.history.jsonl 记录 created/stopped/swept/remounted/paused/resumed/edited 各类事件及循环元数据（v0.4.2）。
 - 暂停/恢复：每条循环卡带 ⏸/▶ 切换；paused 保留定义、跳过投递与淘汰清扫，恢复从当下起算（v0.4.3）。
-- 原地编辑（v0.4.8）：状态条的 ✎（单条 bar 与展开行都有）把该行变成内联编辑框——Enter 或 ✓ 提交（`POST {id, action:'edit', prompt}`），Esc 或 ✕ 取消；编辑会刷新淘汰时钟，改间隔则按既有调度重挂定时器。
+- 原地编辑（v0.4.8，v0.4.9 起可改间隔）：状态条的 ✎（单条 bar 与展开行都有）把该行变成内联编辑框，含两个输入框——指令 + 间隔 token（`5m`/`30s`/`1h`/`2d`，裸数字按分钟）；Enter 或 ✓ 提交（`POST {id, action:'edit', prompt?, interval?}`），Esc 或 ✕ 取消；间隔 token 非法会红边并阻止提交。留空一个字段即只改另一个。编辑会刷新淘汰时钟，改间隔则按既有调度重挂定时器。
 
 ## 开发
 

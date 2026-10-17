@@ -61,7 +61,7 @@ Changes apply as soon as you **save** (the schema's leaves are marked `.volatile
 
 ```sh
 dsh plugin --profile web add "github:NelsonLongxiang/dsh-loop#main"   # one-line git source (build artifacts committed)
-# or npm source (private Gitea registry): dsh plugin --profile web add @nelsonlongxiang/dsh-loop@0.4.8
+# or npm source (private Gitea registry): dsh plugin --profile web add @nelsonlongxiang/dsh-loop@0.4.9
 ```
 
 Or from a local directory (when you have the source): `git clone`, then `cd dsh-loop && dsh plugin --profile web add .`.
@@ -100,7 +100,7 @@ Loop definitions persist to `$DSH_HOME/plugins-data/dsh-loop/loops.json` (fallin
 
 - Pause/resume: each loop card gains a pause/resume toggle; paused loops keep their definition, skip delivery and stale sweeps, and resume from now.
 
-- Edit in place (v0.4.8): the ✎ button on the status bar (single-loop bar and each expanded row) turns the row into an inline editor — Enter or ✓ commits (`POST {id, action:'edit', prompt}`), Esc or ✕ cancels. Editing also refreshes the idle-eviction clock, and interval edits re-arm the live timer from the existing schedule.
+- Edit in place (v0.4.8, interval field since v0.4.9): the ✎ button on the status bar (single-loop bar and each expanded row) turns the row into an inline editor with two fields — the prompt and the interval token (`5m`/`30s`/`1h`/`2d`; a bare number means minutes). Enter or ✓ commits (`POST {id, action:'edit', prompt?, interval?}`), Esc or ✕ cancels; an invalid interval token is flagged red and blocks commit. Leave a field empty to change only the other one. Editing also refreshes the idle-eviction clock, and interval edits re-arm the live timer from the existing schedule.
 
 
 
