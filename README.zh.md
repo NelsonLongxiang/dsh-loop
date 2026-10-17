@@ -59,7 +59,7 @@
 
 ```sh
 dsh plugin --profile web add "github:NelsonLongxiang/dsh-loop#main"   # git 源一行（构建产物已入库）
-# 或 npm 源（私仓 Gitea registry）：dsh plugin --profile web add @nelsonlongxiang/dsh-loop@0.4.9
+# 或 npm 源（私仓 Gitea registry）：dsh plugin --profile web add @nelsonlongxiang/dsh-loop@0.4.10
 ```
 
 或本地目录（有源码时）：`git clone` 后 `cd dsh-loop && dsh plugin --profile web add .`。

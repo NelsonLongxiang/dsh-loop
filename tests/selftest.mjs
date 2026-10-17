@@ -233,12 +233,19 @@ const readStore = () => JSON.parse(readFileSync(storeFile, 'utf8'))
   assert.equal(resumedRes.code, 200)
   assert.equal(readStore().loops.find(l => l.id === loopId).paused !== true, true)
 
+  // 显式未知 action → 400 拒绝且定义原样保留（版本劈叉防护：新 client 的
+  // edit 打到旧 node 半不得变成 stop——2026-10-17 loop-201 事故的回归测试）。
+  const bogusRes = await call({ id: loopId, action: 'explode' })
+  assert.equal(bogusRes.code, 400)
+  assert.match(bogusRes.body.error, /unknown action/)
+  assert.equal(readStore().loops.some(l => l.id === loopId), true)
+
   // 旧 body（无 action 字段）= stop 旧语义
   const stopRes = await call({ id: loopId })
   assert.equal(stopRes.code, 200)
   assert.equal(stopRes.body.action ?? 'stop', 'stop')
   assert.equal(readStore().loops.some(l => l.id === loopId), false)
-  console.log('scenario 7 (POST action pause/resume + legacy stop body compat): OK')
+  console.log('scenario 7 (POST action pause/resume + unknown-action 400 + legacy stop body compat): OK')
 }
 
 // ---- 场景 8：饿死修复——短周期补投定时器在「无 tick 落在 idle 窗口」时投递 ----

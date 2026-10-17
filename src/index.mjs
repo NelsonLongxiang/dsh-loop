@@ -682,6 +682,9 @@ export function apply(ctx, config) {
     // 并顺带回传浏览器侧语言（`?lang=`，非白名单忽略）。GET 读列表回显当前语言
     // （向后兼容的加法字段）；POST 对指定 loop 施动作（body {id, action}，action ∈
     // stop/pause/resume/edit；edit 附带 prompt/interval）——状态条按钮走此端点。
+    // 动作安全分两档：缺 action 字段回落历史 'stop'（0.1 客户端兼容）；显式未知
+    // action 一律 400 拒绝、绝不回落——版本劈叉（新 client + 旧 node 半）不得变
+    // 异状态（2026-10-17 事故：旧 node 把 action:'edit' 回落成 stop，删掉 loop-201）。
     ctx.effect(() => ctx.webServer.register({
       kind: 'exact',
       path: LOOPS_PATH,
@@ -694,13 +697,21 @@ export function apply(ctx, config) {
             for await (const chunk of req) body += String(chunk)
             let id = ''
             let action = 'stop'
+            let unknownAction = ''
             let prompt = ''
             let interval = ''
             try {
               const parsed = JSON.parse(body) ?? {}
               id = String(parsed.id ?? '').trim()
-              if (typeof parsed.action === 'string' && ['stop', 'pause', 'resume', 'edit'].includes(parsed.action)) {
-                action = parsed.action
+              // 缺 action 字段 = 0.1 旧客户端的 {id} 停止语义；显式白名单动作照收；
+              // 显式未知动作 → 置空，下面 400（fail-closed：劈叉版本不得变异状态）。
+              if (parsed.action !== undefined) {
+                if (typeof parsed.action === 'string' && ['stop', 'pause', 'resume', 'edit'].includes(parsed.action)) {
+                  action = parsed.action
+                } else {
+                  action = ''
+                  unknownAction = typeof parsed.action === 'string' ? parsed.action : JSON.stringify(parsed.action)
+                }
               }
               if (typeof parsed.prompt === 'string') prompt = parsed.prompt.trim()
               if (typeof parsed.interval === 'string') interval = parsed.interval.trim()
@@ -710,6 +721,11 @@ export function apply(ctx, config) {
             if (id === '') {
               res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
               res.end(JSON.stringify({ error: `${action} needs a loop id` }))
+              return
+            }
+            if (action === '') {
+              res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+              res.end(JSON.stringify({ error: `unknown action: ${unknownAction}` }))
               return
             }
             if (action === 'edit') {

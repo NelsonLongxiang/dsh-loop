@@ -61,7 +61,7 @@ Changes apply as soon as you **save** (the schema's leaves are marked `.volatile
 
 ```sh
 dsh plugin --profile web add "github:NelsonLongxiang/dsh-loop#main"   # one-line git source (build artifacts committed)
-# or npm source (private Gitea registry): dsh plugin --profile web add @nelsonlongxiang/dsh-loop@0.4.9
+# or npm source (private Gitea registry): dsh plugin --profile web add @nelsonlongxiang/dsh-loop@0.4.10
 ```
 
 Or from a local directory (when you have the source): `git clone`, then `cd dsh-loop && dsh plugin --profile web add .`.
