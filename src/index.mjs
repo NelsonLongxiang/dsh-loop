@@ -24,9 +24,10 @@ const PLUGIN_ID = 'dsh-loop'
 const STORE_DIR = join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'plugins-data', PLUGIN_ID)
 const STORE_FILE = join(STORE_DIR, 'loops.json')
 /**
- * Event ledger (append-only audit): one JSONL row per event, four kinds:
- * created / stopped / swept / remounted. Append failures never block the
- * main flow (same tolerance discipline as saveStoreLoops). No rotation yet.
+ * Event ledger (append-only audit): one JSONL row per event. Kinds:
+ * created / stopped / swept / remounted / paused / resumed / edited.
+ * Append failures never block the main flow (same tolerance discipline as
+ * saveStoreLoops). No rotation yet.
  */
 const HISTORY_FILE = join(STORE_DIR, 'loops.history.jsonl')
 /**
@@ -215,13 +216,14 @@ const DEFAULT_UI_LANGUAGE = 'en'
  */
 const COMMAND_COPY = {
   en: {
-    description: 'Run prompts on a schedule (multiple loops per session): /loop [interval] <prompt> | /loop stop [id] | /loop list',
+    description: 'Run prompts on a schedule (multiple loops per session): /loop [interval] <prompt> | /loop stop [id] | /loop edit <id> <prompt> | /loop list',
     emptyUsage: [
       'No active loop.',
       'Usage: /loop [interval] <prompt> — e.g. /loop 5m check the deploy',
       'Bare /loop runs the built-in maintenance prompt.',
       'Multiple loops may run in parallel; stop one with /loop stop <id>.',
       'Loops persist across restarts and re-attach when their session resumes.',
+      'Edit a running loop in place: /loop edit <id> [interval] <new prompt>.',
     ].join('\n'),
     listRow: (loop) => `${loop.id}: every ${formatInterval(loop.intervalMs)} — ${loop.prompt}`,
     loopStopped: (id) => `Loop ${id} stopped.`,
@@ -233,15 +235,18 @@ const COMMAND_COPY = {
     loopPaused: (id) => `Loop ${id} paused.`,
     loopResumed: (id) => `Loop ${id} resumed.`,
     noPausedLoop: (id) => `No paused loop with id ${id}.`,
+    loopEdited: (loop) => `${loop.id} edited: every ${formatInterval(loop.intervalMs)} — ${loop.prompt}`,
+    editNoChange: (id) => `Nothing to change for ${id}. Usage: /loop edit <id> [interval] <new prompt>`,
   },
   zh: {
-    description: '按计划重复投递 prompt（同一会话可并行多个循环）：/loop [interval] <prompt> | /loop stop [id] | /loop list',
+    description: '按计划重复投递 prompt（同一会话可并行多个循环）：/loop [interval] <prompt> | /loop stop [id] | /loop edit <id> <新指令> | /loop list',
     emptyUsage: [
       '没有活动循环。',
       '用法：/loop [interval] <prompt> — 例如 /loop 5m 检查部署',
       '裸 /loop 使用内置维护 prompt。',
       '多个循环可并行；用 /loop stop <id> 停止其中一个。',
       '循环定义跨重启持久化，会话恢复时自动重挂。',
+      '原地修改运行中的循环：/loop edit <id> [interval] <新指令>。',
     ].join('\n'),
     listRow: (loop) => `${loop.id}：每 ${formatInterval(loop.intervalMs)} — ${loop.prompt}`,
     loopStopped: (id) => `循环 ${id} 已停止。`,
@@ -253,6 +258,8 @@ const COMMAND_COPY = {
     loopPaused: (id) => `循环 ${id} 已暂停。`,
     loopResumed: (id) => `循环 ${id} 已恢复。`,
     noPausedLoop: (id) => `没有 id 为 ${id} 的暂停循环。`,
+    loopEdited: (loop) => `${loop.id} 已编辑：每 ${formatInterval(loop.intervalMs)} — ${loop.prompt}`,
+    editNoChange: (id) => `${id} 没有可变更的内容。用法：/loop edit <id> [interval] <新指令>`,
   },
 }
 
@@ -433,6 +440,40 @@ export function apply(ctx, config) {
       return true
     }
 
+    /**
+     * 原地编辑一条 loop 的定义（prompt 与/或 intervalMs）。运行/暂停/休眠三态
+     * 皆可编辑：entry 是运行态与持久化面共享的同一对象，改 prompt 下一轮投递
+     * 即生效；改 interval 的运行态先卸后重挂（remount 按新 intervalMs 装定时器，
+     * 调度从既有 lastDeliveredAt 续接，不立即补投）。编辑刷新淘汰时钟——用户
+     * 显式意图 = 续命。返回更新后的 entry；未命中或无可变更字段返回 undefined。
+     */
+    function editLoop(loopId, patch) {
+      const state = loops.get(loopId)
+      const entry = state?.entry ?? persisted.get(loopId)
+      if (entry === undefined) return undefined
+      const changed = []
+      if (typeof patch.prompt === 'string' && patch.prompt.length > 0 && patch.prompt !== entry.prompt) {
+        entry.prompt = patch.prompt
+        changed.push('prompt')
+      }
+      if (typeof patch.intervalMs === 'number' && Number.isFinite(patch.intervalMs)
+        && patch.intervalMs > 0 && patch.intervalMs !== entry.intervalMs) {
+        entry.intervalMs = patch.intervalMs
+        changed.push('interval')
+      }
+      if (changed.length === 0) return undefined
+      entry.updatedAt = Date.now()
+      persistAll()
+      appendHistory('edited', loopId, { agentId: entry.agentId, prompt: entry.prompt, intervalMs: entry.intervalMs, changed: changed.join('+') })
+      // 运行态且 interval 变更：重挂定时器到新节奏（paused 定义无定时器可重挂，
+      // resume 时自然按新 intervalMs 装配；prompt-only 变更无需动定时器）。
+      if (state !== undefined && changed.includes('interval')) {
+        detach(state)
+        remount(entry, ctx.agents.get(entry.agentId) ?? state.agent)
+      }
+      return entry
+    }
+
     /** 停一个 agent 的全部 loop（显式意图 = 全部永久删除）；返回停掉数量。 */
     function stopAgentLoops(agent) {
       let stopped = 0
@@ -585,6 +626,27 @@ export function apply(ctx, config) {
               ? { kind: 'success', text: copy().loopResumed(target) }
               : { kind: 'error', text: copy().noPausedLoop(target) }
           }
+          // edit <id> [interval] <new prompt>：原地改指令（可选改间隔）；与
+          // start 同规——前导 token 是间隔则剥掉。运行/暂停/休眠三态皆可编辑。
+          const editMatch = /^edit\s+(\S+)(?:\s+(.*))?$/.exec(raw)
+          if (editMatch !== null) {
+            const target = editMatch[1]
+            const rest = (editMatch[2] ?? '').trim()
+            const hit = agentLoops(invocation.agent).find(loop => loop.id === target)
+            if (hit === undefined) {
+              return { kind: 'error', text: copy().unknownLoop(target) }
+            }
+            const first = rest.split(/\s+/)[0] ?? ''
+            const intervalMs = rest === '' ? undefined : parseIntervalMs(first) ?? undefined
+            const prompt = intervalMs === undefined ? rest : rest.slice(first.length).trim()
+            if (prompt === '' && intervalMs === undefined) {
+              return { kind: 'error', text: copy().editNoChange(target) }
+            }
+            const edited = editLoop(target, { prompt: prompt === '' ? undefined : prompt, intervalMs })
+            return edited !== undefined
+              ? { kind: 'success', text: copy().loopEdited(edited) }
+              : { kind: 'error', text: copy().editNoChange(target) }
+          }
           if (raw === 'clear') {
             const stopped = stopAgentLoops(invocation.agent)
             return stopped > 0
@@ -618,7 +680,8 @@ export function apply(ctx, config) {
 
     // client half 轮询的活动 loop 列表：按 sessionId 过滤（state.agent.id === sessionId），
     // 并顺带回传浏览器侧语言（`?lang=`，非白名单忽略）。GET 读列表回显当前语言
-    // （向后兼容的加法字段）；POST 停指定 loop（body {id}）——状态条停止按钮走此端点。
+    // （向后兼容的加法字段）；POST 对指定 loop 施动作（body {id, action}，action ∈
+    // stop/pause/resume/edit；edit 附带 prompt/interval）——状态条按钮走此端点。
     ctx.effect(() => ctx.webServer.register({
       kind: 'exact',
       path: LOOPS_PATH,
@@ -631,18 +694,41 @@ export function apply(ctx, config) {
             for await (const chunk of req) body += String(chunk)
             let id = ''
             let action = 'stop'
+            let prompt = ''
+            let interval = ''
             try {
               const parsed = JSON.parse(body) ?? {}
               id = String(parsed.id ?? '').trim()
-              if (typeof parsed.action === 'string' && ['stop', 'pause', 'resume'].includes(parsed.action)) {
+              if (typeof parsed.action === 'string' && ['stop', 'pause', 'resume', 'edit'].includes(parsed.action)) {
                 action = parsed.action
               }
+              if (typeof parsed.prompt === 'string') prompt = parsed.prompt.trim()
+              if (typeof parsed.interval === 'string') interval = parsed.interval.trim()
             } catch {
               // 非 JSON body → 视为空 id（下面 400）。
             }
             if (id === '') {
               res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
               res.end(JSON.stringify({ error: `${action} needs a loop id` }))
+              return
+            }
+            if (action === 'edit') {
+              // interval 不可解析且无 prompt → 400；有 prompt 时坏 interval 静默忽略
+              //（与既有「未知 action 回落 stop」的宽松风格一致）。
+              const intervalMs = interval === '' ? undefined : parseIntervalMs(interval) ?? undefined
+              if (prompt === '' && intervalMs === undefined) {
+                res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+                res.end(JSON.stringify({ error: 'edit needs a new prompt or interval' }))
+                return
+              }
+              const edited = editLoop(id, { prompt: prompt === '' ? undefined : prompt, intervalMs })
+              res.writeHead(edited !== undefined ? 200 : 404, { 'content-type': 'application/json; charset=utf-8' })
+              res.end(JSON.stringify({
+                ok: edited !== undefined,
+                id,
+                action,
+                ...(edited !== undefined ? { prompt: edited.prompt, intervalMs: edited.intervalMs } : {}),
+              }))
               return
             }
             const applied = action === 'pause'
@@ -712,12 +798,13 @@ export function apply(ctx, config) {
     const toolDefinitions = {
       loop: defineTool({
         name: 'loop',
-        description: 'Start, stop, pause, resume, or inspect scheduled loops on the current agent. '
+        description: 'Start, stop, pause, resume, edit, or inspect scheduled loops on the current agent. '
           + 'Multiple loops may run in parallel; start creates a new one each time. '
           + 'A loop re-delivers a prompt every interval; use it for polling, PR babysitting, '
           + 'or build-fix-test cycles. The model may adjust the interval or stop the loop '
-          + 'each round, which is the self-paced mode. Loop definitions persist across '
-          + 'restarts and re-attach when their session resumes.',
+          + 'each round, which is the self-paced mode. edit rewrites a running loop\'s '
+          + 'prompt (and optionally its interval) in place, without stopping it. '
+          + 'Loop definitions persist across restarts and re-attach when their session resumes.',
         parameters: {
           action: { type: 'string', required: true },
           prompt: { type: 'string' },
@@ -769,6 +856,22 @@ export function apply(ctx, config) {
               return hit !== undefined && resumeLoop(hit.id, agent)
                 ? `loop ${target} resumed`
                 : `no paused loop with id ${target}`
+            }
+            case 'edit': {
+              const target = typeof args.loop_id === 'string' ? args.loop_id : undefined
+              if (target === undefined) throw new Error('loop edit needs loop_id')
+              const prompt = typeof args.prompt === 'string' && args.prompt.length > 0 ? args.prompt : undefined
+              const intervalMs = typeof args.interval === 'string' ? parseIntervalMs(args.interval) ?? undefined : undefined
+              if (prompt === undefined && intervalMs === undefined) {
+                throw new Error('loop edit needs a new prompt or interval')
+              }
+              const hit = agentLoops(agent).find(s => s.id === target)
+              const edited = hit === undefined ? undefined : editLoop(target, { prompt, intervalMs })
+              return edited !== undefined
+                ? `loop ${target} edited: every ${formatInterval(edited.intervalMs)} — ${edited.prompt}`
+                : hit === undefined
+                  ? `no active loop with id ${target}`
+                  : `loop ${target} unchanged (values already current)`
             }
             case 'status':
             case 'list': {

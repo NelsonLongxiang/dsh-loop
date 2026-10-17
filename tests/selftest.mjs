@@ -271,3 +271,69 @@ const readStore = () => JSON.parse(readFileSync(storeFile, 'utf8'))
   console.log('scenario 8 (timer-driven catch-up delivers on idle without any tick): OK')
 }
 
+// ---- 场景 9：编辑指令/间隔（运行态改 prompt 下一轮生效；改 interval 重挂定时器；paused/休眠可编辑；台账 edited）----
+{
+  const ctx = makeCtx()
+  mod.apply(ctx)
+  const agent = makeAgent('sess-E')
+  ctx.agents.map.set('sess-E', agent)
+  const started = ctx._command.handler({ agent, rawInput: '5m watch old prompt' })
+  assert.match(started.text, /started/)
+  const id = readStore().loops.find(l => l.prompt === 'watch old prompt').id
+  assert.equal(agent.followups.length, 1, 'immediate first delivery')
+
+  // 命令路径：编辑 prompt（不改 interval）→ 无需重挂，下一轮投递即用新指令
+  const edited = ctx._command.handler({ agent, rawInput: `edit ${id} watch NEW prompt` })
+  assert.match(edited.text, new RegExp(`${id} edited`))
+  assert.equal(readStore().loops.find(l => l.id === id).prompt, 'watch NEW prompt')
+  ctx._intervals[ctx._intervals.length - 1]()
+  assert.equal(agent.followups.length, 2, 'next tick delivers')
+  assert.match(JSON.stringify(agent.followups[1]), /watch NEW prompt/, 'delivery uses edited prompt')
+
+  // POST 路径：改 interval → 运行态重挂（旧投递器卸下、新节奏装上）
+  const call = async (payload) => {
+    const chunks = []
+    const res = { writeHead(c) { this.code = c }, end(b) { chunks.push(b) } }
+    await ctx._routes[0].handler({ method: 'POST', url: '/plugins/dsh-loop/loops', [Symbol.asyncIterator]() { return (async function* () { yield JSON.stringify(payload) })() } }, res)
+    return { code: res.code, body: JSON.parse(chunks.join('')) }
+  }
+  const iv = await call({ id, action: 'edit', interval: '2m' })
+  assert.equal(iv.code, 200)
+  assert.equal(iv.body.intervalMs, 120000)
+  assert.equal(readStore().loops.find(l => l.id === id).intervalMs, 120000)
+  ctx._intervals[ctx._intervals.length - 1]()
+  assert.equal(agent.followups.length, 3, 're-armed timer delivers')
+
+  // paused 可编辑：定义保留、paused 标记不受影响
+  ctx._command.handler({ agent, rawInput: `pause ${id}` })
+  const pe = await call({ id, action: 'edit', prompt: 'paused edit target' })
+  assert.equal(pe.code, 200)
+  const pausedRow = readStore().loops.find(l => l.id === id)
+  assert.equal(pausedRow.prompt, 'paused edit target')
+  assert.equal(pausedRow.paused, true)
+
+  // 休眠（agent 销毁）可编辑：对看不见的循环也能改指令
+  ctx.agents.map.delete('sess-E')
+  ctx._emit('agent/disposed', { agent })
+  const de = await call({ id, action: 'edit', prompt: 'dormant edit target' })
+  assert.equal(de.code, 200)
+  assert.equal(readStore().loops.find(l => l.id === id).prompt, 'dormant edit target')
+
+  // 边界：未知 id 404；空编辑 400；命令空编辑报用法
+  const miss = await call({ id: 'loop-99999', action: 'edit', prompt: 'x' })
+  assert.equal(miss.code, 404)
+  const empty = await call({ id, action: 'edit' })
+  assert.equal(empty.code, 400)
+  const noChange = ctx._command.handler({ agent, rawInput: `edit ${id}` })
+  assert.match(noChange.text, /Nothing to change/)
+
+  // 台账：edited 事件含 changed 字段
+  const { readFileSync: rfs } = await import('node:fs')
+  const histRows = rfs(join(home, 'plugins-data', 'dsh-loop', 'loops.history.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l))
+  const editedRows = histRows.filter(r => r.event === 'edited' && r.loopId === id)
+  assert.ok(editedRows.length >= 4, 'ledger has edited rows, got ' + editedRows.length)
+  assert.ok(editedRows.some(r => r.changed === 'prompt'))
+  assert.ok(editedRows.some(r => r.changed === 'interval'))
+  console.log('scenario 9 (edit prompt/interval: live re-delivery, interval re-arm, paused/dormant editable, ledger): OK')
+}
+

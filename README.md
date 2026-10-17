@@ -22,7 +22,7 @@ Delivers a prompt to the current agent at a fixed interval — ideal for polling
 
 | Tool | Description |
 |---|---|
-| `loop` | start (start a new loop) / stop (stop a specific one or all) / status / list (list loops in the current session) |
+| `loop` | start (start a new loop) / stop (stop a specific one or all) / pause / resume / edit (rewrite a loop's prompt & interval in place) / status / list (list loops in the current session) |
 
 **Commands** (user side):
 
@@ -31,6 +31,8 @@ Delivers a prompt to the current agent at a fixed interval — ideal for polling
 | `/loop [interval] <prompt>` | Start a new loop (interval `5m`/`30s`/`1h`/`2d` or a bare number = minutes; bare `/loop` uses the built-in maintenance prompt) |
 | `/loop list` | List all loops in the current session (with ids) |
 | `/loop stop <id>` / `/loop stop` | Stop a specific loop / stop all |
+| `/loop pause <id>` / `/loop resume <id>` | Pause one loop (keep the definition, skip delivery and sweeps) / resume it from now |
+| `/loop edit <id> [interval] <new prompt>` | Edit a running loop **in place** — new prompt takes effect on the next delivery; a new interval re-arms the timer (works on live, paused and dormant loops) |
 
 `/loop` replies (the command-palette description, `list` / usage / stop output) follow the **UI language**: the client half relays its active locale to the plugin, so they render in Chinese or English to match the interface. Headless runs with no client in sight keep English.
 
@@ -59,7 +61,7 @@ Changes apply as soon as you **save** (the schema's leaves are marked `.volatile
 
 ```sh
 dsh plugin --profile web add "github:NelsonLongxiang/dsh-loop#main"   # one-line git source (build artifacts committed)
-# or npm source (private Gitea registry): dsh plugin --profile web add @nelsonlongxiang/dsh-loop@0.4.5
+# or npm source (private Gitea registry): dsh plugin --profile web add @nelsonlongxiang/dsh-loop@0.4.8
 ```
 
 Or from a local directory (when you have the source): `git clone`, then `cd dsh-loop && dsh plugin --profile web add .`.
@@ -81,19 +83,24 @@ After installing, **restart web** for it to take effect (bundles are composed at
 /loop list                                # loop-1: every 5m — check PRs on the deploy branch
 /loop stop loop-1                         # stop a specific one
 /loop stop                                # stop all
+/loop edit loop-1 watch the staging branch instead   # rewrite the prompt in place
+/loop edit loop-1 10m watch staging       # change interval (and prompt) without a restart
 
 # Model side (loop tool)
 loop action=start prompt="fix flaky test" interval="2m"
 loop action=status
 loop action=stop loop_id="loop-2"
+loop action=edit loop_id="loop-2" prompt="fix the other test" interval="5m"
 ```
 
 Loop definitions persist to `$DSH_HOME/plugins-data/dsh-loop/loops.json` (falling back to `~/.dsh/` when `DSH_HOME` is unset). After a restart, a loop re-attaches automatically when its host session resumes — the anchor is the `agent/created` lifecycle event (live agent objects are never serialized; only `sessionId`/`agentId`, prompt, interval and `lastDeliveredAt` are stored). Explicit stops (command, tool, or the status-bar button) delete the definition permanently. Definitions whose host never returns are evicted after 7 idle days (never sooner than twice the loop's own interval), keeping the file bounded.
 
 - Idle polling backoff: empty responses (no active loops) back the client poll off to 5 minutes; any active loop returns it to 60s. Background tabs pause polling entirely (visibilitychange).
-- Event ledger: append-only plugins-data/dsh-loop/loops.history.jsonl records created/stopped/swept/remounted events with loop metadata (v0.4.2).
+- Event ledger: append-only plugins-data/dsh-loop/loops.history.jsonl records created/stopped/swept/remounted/paused/resumed/edited events with loop metadata (v0.4.2).
 
 - Pause/resume: each loop card gains a pause/resume toggle; paused loops keep their definition, skip delivery and stale sweeps, and resume from now.
+
+- Edit in place (v0.4.8): the ✎ button on the status bar (single-loop bar and each expanded row) turns the row into an inline editor — Enter or ✓ commits (`POST {id, action:'edit', prompt}`), Esc or ✕ cancels. Editing also refreshes the idle-eviction clock, and interval edits re-arm the live timer from the existing schedule.
 
 
 

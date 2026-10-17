@@ -113,6 +113,10 @@ const zh = {
   'open': '展开',
   'close': '收起',
   'stop': '停止循环',
+  'edit': '编辑循环',
+  'editPrompt': '新指令…',
+  'confirm': '保存',
+  'cancel': '取消',
 } satisfies Record<string, string>
 /** Loop namespace key union. */
 type LoopKey = keyof typeof zh
@@ -126,6 +130,10 @@ const en = {
   'open': 'Expand',
   'close': 'Collapse',
   'stop': 'Stop loop',
+  'edit': 'Edit loop',
+  'editPrompt': 'New prompt…',
+  'confirm': 'Save',
+  'cancel': 'Cancel',
 } satisfies Record<string, string>
 
 /**
@@ -165,6 +173,7 @@ const zhSettings = {
     + '· start <任务 prompt> [interval] — 按间隔重复投递任务；interval 形如 5m / 30s / 1h，缺省 1m\n'
     + '· stop [loop_id] — 停止指定循环；不传则停止当前会话全部循环\n'
     + '· status — 列出当前会话的活动循环（id、间隔、任务 prompt）\n'
+    + '· edit <loop_id> <新 prompt> [interval] — 原地修改运行中循环的指令（不必停了重建）\n'
     + '关闭后不再注入：模型看不到也调不动 loop（tools.schemas 不含它）；/loop 命令（用户侧）与状态条不受影响。',
   'readOnly': '本部署的设置为只读。',
   'save': '保存',
@@ -182,6 +191,7 @@ const enSettings = {
     + '· start <task prompt> [interval] — re-delivers the task every interval; interval like 5m / 30s / 1h, defaults to 1m\n'
     + '· stop [loop_id] — stops one loop; without loop_id, stops all loops of the current session\n'
     + '· status — lists the session\'s active loops (id, interval, task prompt)\n'
+    + '· edit <loop_id> <new prompt> [interval] — rewrites a running loop in place (no stop/restart needed)\n'
     + 'Turning it off stops the injection: loop is no longer in the model\'s tools.schemas; the /loop command (user side) and the status bar stay.',
   'readOnly': 'This deployment stores settings read-only.',
   'save': 'Save',
@@ -327,6 +337,14 @@ const ACTIONS_STYLE = {
   display: 'flex', flex: 'none', alignItems: 'center', gap: 10,
 } as CSSProperties
 
+/** 内联编辑输入框（编辑指令）：官方输入面 token，行内 26px 高。 */
+const EDIT_INPUT_STYLE = {
+  flex: 1, minWidth: 0, height: 26, padding: '0 8px',
+  border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 8,
+  background: 'var(--dsw-alias-bg-layer-2)', color: 'var(--dsw-alias-label-primary)',
+  fontSize: 13, fontFamily: 'inherit', lineHeight: '24px', outline: 'none',
+} as CSSProperties
+
 /**
  * 卡片表面层：官方 `.bar:before` 的内联等价物（本插件不注入 CSS，没有伪元素）。
  * 绝对定位 + `z-index:-1` + 父级 `isolation:isolate` → 压在本体背景之下、内容
@@ -409,15 +427,15 @@ export function LoopBar(
   const [open, setOpen] = useState(false)
   const [stopping, setStopping] = useState<string | null>(null)
 
-  /** POST {id, action} 到 Node half 路由；成功后立即补一次轮询提升即时感。 */
-  const actOnLoop = useCallback(async (id: string, action: 'stop' | 'pause' | 'resume'): Promise<void> => {
+  /** POST {id, action, ...extra} 到 Node half 路由；成功后立即补一次轮询提升即时感。 */
+  const actOnLoop = useCallback(async (id: string, action: 'stop' | 'pause' | 'resume' | 'edit', extra?: { prompt?: string }): Promise<void> => {
     if (stopping !== null) return
     setStopping(id)
     try {
       await fetch(LOOPS_PATH, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id, action }),
+        body: JSON.stringify({ id, action, ...extra }),
       })
       await pollRef.current?.()
     } catch {
@@ -426,6 +444,45 @@ export function LoopBar(
       setStopping(null)
     }
   }, [stopping])
+
+  // 指令编辑态（单条 bar 与展开行共用）：editingId = 正在编辑的 loop id。
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
+  const startEdit = (loop: WireLoop): void => {
+    setEditingId(loop.id)
+    setDraft(loop.prompt)
+  }
+  const cancelEdit = (): void => {
+    setEditingId(null)
+    setDraft('')
+  }
+  /** 提交编辑：空草稿 = 取消（指令不允许改空）；成功后 actOnLoop 内会补一次轮询。 */
+  const commitEdit = (id: string): void => {
+    const next = draft.trim()
+    if (next === '' || stopping !== null) { cancelEdit(); return }
+    setEditingId(null)
+    setDraft('')
+    void actOnLoop(id, 'edit', { prompt: next })
+  }
+  /** 编辑态控件：输入框（Enter 提交 / Esc 取消）+ ✓/✕。 */
+  const editControls = (loop: WireLoop): ReactNode => (
+    <>
+      <input
+        data-loop-edit-input=""
+        style={EDIT_INPUT_STYLE}
+        value={draft}
+        placeholder={t('editPrompt')}
+        aria-label={t('edit')}
+        onChange={(e) => { setDraft(e.target.value) }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commitEdit(loop.id) }
+          if (e.key === 'Escape') { cancelEdit() }
+        }}
+      />
+      <BarIconButton label={t('confirm')} disabled={stopping === loop.id} onClick={() => { commitEdit(loop.id) }}>✓</BarIconButton>
+      <BarIconButton label={t('cancel')} disabled={stopping === loop.id} onClick={() => { cancelEdit() }}>✕</BarIconButton>
+    </>
+  )
 
   // 对话页探针：flow 列存在性（navbar/task-status 同信号）。body 级 observer
   // 只跑 querySelector，回调轻量；view 切换（flow 移除/重建）都触发。
@@ -448,44 +505,59 @@ export function LoopBar(
     const paused = loop.paused === true
     const countdown = countdownTo(loop.nextTickAt)
     const countdownText = countdown > 0 ? `${countdown}s` : 'now'
+    const editing = editingId === loop.id
     return (
       <div
         key={loop.id}
         data-loop-bar=""
-        style={{ ...CARD_CHROME, ...ROW_CHROME, ...(paused ? { opacity: 0.55 } : {}) }}
+        style={{ ...CARD_CHROME, ...ROW_CHROME, ...((paused && !editing) ? { opacity: 0.55 } : {}) }}
       >
         <BarSurface />
         <LoopGlyph />
-        {/* 状态标签（13/24 medium，官方 `.label`）+ loop id；paused 显示「已暂停」 */}
-        <span style={LABEL_STYLE}>
-          {paused ? t('paused') : t('active')}
-          <span style={LOOP_ID_STYLE}>{loop.id}</span>
-        </span>
-        {/* prompt：主文本（官方 `.objective`），省略号截断 */}
-        <span style={OBJECTIVE_STYLE}>{loop.prompt}</span>
-        {/* 间隔 + 倒计时（goal 无此段，沿用本插件 caption 节奏）；paused 只显示
-            「已暂停」（Node half 的 intervalText 已按 paused 置好）不显示倒计时 */}
-        <span style={CAPTION_STYLE}>
-          {paused ? loop.intervalText : `${loop.intervalText} · ${t('next', { countdown: countdownText })}`}
-        </span>
-        {/* 暂停/恢复 + 停止按钮：官方 `.actions` + `.iconBtn`（pause/resume 为
-            本地持久化面的新增动作：active 显 ⏸，paused 显 ▶） */}
-        <span style={ACTIONS_STYLE}>
-          <BarIconButton
-            label={paused ? t('resume') : t('pause')}
-            disabled={stopping === loop.id}
-            onClick={() => { void actOnLoop(loop.id, paused ? 'resume' : 'pause') }}
-          >
-            {paused ? '▶' : '⏸'}
-          </BarIconButton>
-          <BarIconButton
-            label={t('stop')}
-            disabled={stopping === loop.id}
-            onClick={() => { void actOnLoop(loop.id, 'stop') }}
-          >
-            <IconCloseOutlineRegular size={14} />
-          </BarIconButton>
-        </span>
+        {editing ? (
+          /* 编辑态：指令输入框占主区，Enter 提交 / Esc 取消（✓/✕ 同义）。 */
+          editControls(loop)
+        ) : (
+          <>
+            {/* 状态标签（13/24 medium，官方 `.label`）+ loop id；paused 显示「已暂停」 */}
+            <span style={LABEL_STYLE}>
+              {paused ? t('paused') : t('active')}
+              <span style={LOOP_ID_STYLE}>{loop.id}</span>
+            </span>
+            {/* prompt：主文本（官方 `.objective`），省略号截断 */}
+            <span style={OBJECTIVE_STYLE}>{loop.prompt}</span>
+            {/* 间隔 + 倒计时（goal 无此段，沿用本插件 caption 节奏）；paused 只显示
+                「已暂停」（Node half 的 intervalText 已按 paused 置好）不显示倒计时 */}
+            <span style={CAPTION_STYLE}>
+              {paused ? loop.intervalText : `${loop.intervalText} · ${t('next', { countdown: countdownText })}`}
+            </span>
+            {/* 编辑/暂停恢复/停止：官方 `.actions` + `.iconBtn`（edit 原地改指令，
+                pause/resume 为本地持久化面的动作：active 显 ⏸，paused 显 ▶） */}
+            <span style={ACTIONS_STYLE}>
+              <BarIconButton
+                label={t('edit')}
+                disabled={stopping === loop.id}
+                onClick={() => { startEdit(loop) }}
+              >
+                ✎
+              </BarIconButton>
+              <BarIconButton
+                label={paused ? t('resume') : t('pause')}
+                disabled={stopping === loop.id}
+                onClick={() => { void actOnLoop(loop.id, paused ? 'resume' : 'pause') }}
+              >
+                {paused ? '▶' : '⏸'}
+              </BarIconButton>
+              <BarIconButton
+                label={t('stop')}
+                disabled={stopping === loop.id}
+                onClick={() => { void actOnLoop(loop.id, 'stop') }}
+              >
+                <IconCloseOutlineRegular size={14} />
+              </BarIconButton>
+            </span>
+          </>
+        )}
       </div>
     )
   }
@@ -544,10 +616,18 @@ export function LoopBar(
           {loops.map(loop => (
             <div key={loop.id} style={{ padding: '2px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={CAPTION_STYLE}>{loop.id}</span>
-              <span style={OBJECTIVE_STYLE}>{loop.prompt}</span>
-              <span style={CAPTION_STYLE}>
-                {loop.intervalText} · {t('next', { countdown: countdownTo(loop.nextTickAt) > 0 ? `${countdownTo(loop.nextTickAt)}s` : 'now' })}
-              </span>
+              {editingId === loop.id ? (
+                /* 行内编辑：与单条 bar 同一控件与提交路径。 */
+                editControls(loop)
+              ) : (
+                <>
+                  <span style={OBJECTIVE_STYLE}>{loop.prompt}</span>
+                  <span style={CAPTION_STYLE}>
+                    {loop.intervalText} · {t('next', { countdown: countdownTo(loop.nextTickAt) > 0 ? `${countdownTo(loop.nextTickAt)}s` : 'now' })}
+                  </span>
+                  <BarIconButton label={t('edit')} disabled={stopping === loop.id} onClick={() => { startEdit(loop) }}>✎</BarIconButton>
+                </>
+              )}
             </div>
           ))}
         </div>

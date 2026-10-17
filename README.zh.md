@@ -20,7 +20,7 @@
 
 | 工具 | 说明 |
 |---|---|
-| `loop` | start（启动新循环）/ stop（停指定或全部）/ status / list（列出当前会话循环） |
+| `loop` | start（启动新循环）/ stop（停指定或全部）/ pause / resume（暂停/恢复）/ edit（原地改指令与间隔）/ status / list（列出当前会话循环） |
 
 **命令**（用户侧）：
 
@@ -29,6 +29,8 @@
 | `/loop [间隔] <prompt>` | 启动新循环（间隔 `5m`/`30s`/`1h`/`2d` 或裸数字=分钟；裸 `/loop` 用内置维护 prompt） |
 | `/loop list` | 列出当前会话全部循环（含 id） |
 | `/loop stop <id>` / `/loop stop` | 停指定循环 / 停全部 |
+| `/loop pause <id>` / `/loop resume <id>` | 暂停一条（保留定义、不投递、免淘汰）/ 从当下恢复 |
+| `/loop edit <id> [间隔] <新指令>` | **原地修改**运行中的循环——新指令下一轮投递即生效；改间隔会按既有节奏重挂定时器（运行/暂停/休眠三态皆可编辑） |
 
 `/loop` 的回执（命令面板里的描述、`list` / 用法 / stop 输出）跟随**界面语言**：client half 把当前 locale 回传给插件，中英文按界面切换；没有客户端在场的 headless 运行保持英文。
 
@@ -57,7 +59,7 @@
 
 ```sh
 dsh plugin --profile web add "github:NelsonLongxiang/dsh-loop#main"   # git 源一行（构建产物已入库）
-# 或 npm 源（私仓 Gitea registry）：dsh plugin --profile web add @nelsonlongxiang/dsh-loop@0.4.5
+# 或 npm 源（私仓 Gitea registry）：dsh plugin --profile web add @nelsonlongxiang/dsh-loop@0.4.8
 ```
 
 或本地目录（有源码时）：`git clone` 后 `cd dsh-loop && dsh plugin --profile web add .`。
@@ -79,17 +81,22 @@ dsh plugin --profile web add "github:NelsonLongxiang/dsh-loop#main"   # git 源�
 /loop list                           # loop-1: every 5m — 检查 deploy 分支的 PR
 /loop stop loop-1                    # 停指定
 /loop stop                           # 停全部
+/loop edit loop-1 改盯 staging 分支  # 原地改指令
+/loop edit loop-1 10m 盯 staging     # 连间隔一起改（无需停了重建）
 
 # 模型侧（loop 工具）
 loop action=start prompt="修 flaky test" interval="2m"
 loop action=status
 loop action=stop loop_id="loop-2"
+loop action=edit loop_id="loop-2" prompt="修另一个 test" interval="5m"
 ```
 
 循环定义持久化到 `$DSH_HOME/plugins-data/dsh-loop/loops.json`（未设置 `DSH_HOME` 时回落 `~/.dsh/`）。进程重启后，宿主会话恢复（agent 以同一 id 重建）时循环自动重挂——锚点是 `agent/created` 生命周期事件（live agent 对象永不序列化，只存 `sessionId`/`agentId`、prompt、间隔与 `lastDeliveredAt`）。显式停止（命令/工具/状态条按钮）= 定义永久删除。宿主不再回来的定义在空闲 7 天后淘汰（不会早于循环自身间隔的两倍），文件不膨胀。
 
 - 空闲轮询退避：无活动循环时客户端轮询退到 5 分钟，出现活动循环即回 60s；后台标签页整段暂停轮询（visibilitychange）。
-- 事件台账：append-only 的 plugins-data/dsh-loop/loops.history.jsonl 记录 created/stopped/swept/remounted 四类件及循环元数据（v0.4.2）。
+- 事件台账：append-only 的 plugins-data/dsh-loop/loops.history.jsonl 记录 created/stopped/swept/remounted/paused/resumed/edited 各类事件及循环元数据（v0.4.2）。
+- 暂停/恢复：每条循环卡带 ⏸/▶ 切换；paused 保留定义、跳过投递与淘汰清扫，恢复从当下起算（v0.4.3）。
+- 原地编辑（v0.4.8）：状态条的 ✎（单条 bar 与展开行都有）把该行变成内联编辑框——Enter 或 ✓ 提交（`POST {id, action:'edit', prompt}`），Esc 或 ✕ 取消；编辑会刷新淘汰时钟，改间隔则按既有调度重挂定时器。
 
 ## 开发
 
